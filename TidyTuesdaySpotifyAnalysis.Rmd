@@ -1,0 +1,195 @@
+---
+title: "TidyTuesday Spotify 1/21/20"
+author: "Andrew Couch"
+date: "1/21/2020"
+output: rmarkdown::github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+library(tidyverse)
+spotify_songs <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-21/spotify_songs.csv')
+
+```
+
+```{r}
+#Basic understanding of dataset 
+spotify_songs %>% glimpse()
+
+
+#Probably don't need track_id, tack_album_id, playlist_id 
+df <- spotify_songs %>% 
+  select(-contains("id")) %>%
+  glimpse()
+```
+
+```{r}
+#Looking at playlist genre and their subgenre
+df %>% 
+  select(playlist_genre, playlist_subgenre) %>% 
+  count(playlist_genre, playlist_subgenre) %>% 
+  ggplot(aes(x = reorder(playlist_subgenre, -n), y = n, fill = playlist_genre)) + 
+  geom_col() + 
+  facet_wrap(~playlist_genre, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = "none") 
+#These are some long subgenre names 
+#Progressive electro house, indie poptimisim, neo soul are genres that I am not familiar with 
+```
+
+
+
+```{r}
+df %>% 
+  select(playlist_genre) %>% 
+  count(playlist_genre) %>% 
+  ggplot(aes(x = reorder(playlist_genre, -n), y = n, fill = playlist_genre)) + 
+  geom_col()
+
+#EDM, rap, and pop are still popular however, Rock isnt as popular 
+#Are songs labeled with multiple genres and subgenres? 
+```
+
+
+
+
+
+
+```{r}
+#What songs appear in multiple playlist genres?
+df %>% 
+  select(track_name, playlist_genre) %>% 
+  unique() %>% 
+  count(track_name) %>% 
+  filter(n > 1) %>% 
+  arrange(track_name) 
+
+#A lot of songs appear in more than 1 however only one appears in 3
+```
+
+```{r}
+#What about subgenres? 
+df %>% 
+  select(track_name, playlist_subgenre) %>% 
+  unique() %>% 
+  count(track_name) %>% 
+  filter(n > 1) %>% 
+  arrange(-n, track_name)
+
+#A lot of songs appear in more than 1 subgenre.
+```
+
+
+```{r}
+#Lets look at the distribution of overall subgenre appearances 
+df %>% 
+  select(track_name, playlist_subgenre) %>% 
+  unique() %>% 
+  count(track_name) %>% 
+  filter(n > 1) %>% 
+  ggplot(aes(x = n)) + 
+  geom_density() + 
+  scale_x_log10()
+
+df %>% 
+  select(track_name, playlist_subgenre) %>% 
+  unique() %>% 
+  count(track_name) %>% 
+  filter(n > 1) %>% 
+  summary()
+
+```
+
+
+```{r}
+#Lets look at it subgenre appearances by genre 
+df %>% 
+  select(track_name, playlist_genre, playlist_subgenre) %>% 
+  unique() %>% 
+  group_by(playlist_genre, playlist_genre) %>% 
+  count(track_name) %>% 
+  filter(n > 1) %>% 
+  ggplot(aes(x = n, fill = playlist_genre)) + 
+  geom_density() + 
+  scale_x_log10() +
+  facet_wrap(~playlist_genre, scales = "free")
+```
+
+
+
+```{r}
+# iris %>% 
+#   group_by(Species) %>% 
+#   do(model = lm(Sepal.Length~Sepal.Width + Petal.Length, data = .)) %>% 
+#   broom::augment(model)
+```
+
+```{r}
+#Lets look at the spotify features 
+df %>% 
+  select(9:20) %>% 
+  summary()
+
+#The music features are scaled 0-1 besides key, loudness, tempo, deuration_ms
+```
+
+
+```{r}
+spotifyDf <- df %>% select(9:20)
+#Lets convertt duration_ms to minutes and seconds 
+spotifyDf <-  spotifyDf %>% 
+  mutate(minutes = duration_ms/60000) %>% 
+  select(-duration_ms)
+```
+
+
+
+```{r}
+#Convert key numbers in letters using http://openmusictheory.com/pitch(Class).html
+musickey <- data.frame(notation = c(0,1,2,3,4,5,6,7,8,9,10,11), 
+                       key = c("C", "C#","D","D#","E","F","F#","G","G#","A","Bb","B"))
+
+spotifyDf <- spotifyDf %>% 
+  inner_join(musickey, by = c("key" = "notation")) %>% 
+  mutate(key = key.y) %>% 
+  select(-key.y)
+```
+
+
+```{r}
+spotifyDf %>% 
+  select(key,mode) %>%
+  mutate(mode = if_else(mode == 0, "Minor Key", "Major Key")) %>% 
+  group_by(mode) %>% 
+  count(key) %>% 
+  mutate(key = as.factor(key)) %>% 
+  ggplot(aes(x = key, y =n, fill = key)) + 
+  geom_col() + 
+  facet_wrap(~mode, scales = "free")
+```
+
+
+```{r}
+options(scipen = 999)
+spotifyDf %>% 
+  select(-minutes, -tempo, -loudness) %>% 
+  rename("musickey" = key, "major" = mode) %>% 
+  mutate(major = if_else(major == 1, "major", "minor")) %>% 
+  gather(key = "key", value = "value", -musickey,-major) %>% 
+  arrange(major, musickey, key, value) %>% 
+  ggplot(aes(x = value, fill = key, group = key)) + 
+  geom_density(alpha = .5) +
+  scale_x_sqrt() + 
+  scale_y_sqrt() + 
+  facet_grid(musickey~major, scales = "free")
+```
+
+
+
+
+
