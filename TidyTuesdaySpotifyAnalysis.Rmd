@@ -35,6 +35,7 @@ df %>%
   count(playlist_genre, playlist_subgenre) %>% 
   ggplot(aes(x = reorder(playlist_subgenre, -n), y = n, fill = playlist_genre)) + 
   geom_col() + 
+  coord_flip() + 
   facet_wrap(~playlist_genre, scales = "free") + 
   theme(axis.text.x = element_text(angle = 90),
         legend.position = "none") 
@@ -162,6 +163,7 @@ spotifyDf <- spotifyDf %>%
 
 
 ```{r}
+#What keys are used in the Spotify songs? 
 spotifyDf %>% 
   select(key,mode) %>%
   mutate(mode = if_else(mode == 0, "Minor Key", "Major Key")) %>% 
@@ -171,10 +173,14 @@ spotifyDf %>%
   ggplot(aes(x = key, y =n, fill = key)) + 
   geom_col() + 
   facet_wrap(~mode, scales = "free")
+
+#C major makes sense for its popularity and also G and C#
+#Minor keys are interesting, B minor is the most popular by a decent amount
 ```
 
 
-```{r}
+```{r, fig.height= 15, fig.width= 8}
+#Lets look at  the distribtuion of the spotify features for each key and its relative mode
 options(scipen = 999)
 spotifyDf %>% 
   select(-minutes, -tempo, -loudness) %>% 
@@ -187,7 +193,219 @@ spotifyDf %>%
   scale_x_sqrt() + 
   scale_y_sqrt() + 
   facet_grid(musickey~major, scales = "free")
+
+#This plot is not easy to read and is hard to get any instights
 ```
+
+
+```{r, fig.width= 12, fig.height= 12}
+#Let's make a better plot by looking at the means of each key and its relative mode and spotify features 
+spotifyDf %>% 
+  rename("musickey" = key) %>% 
+  mutate(mode = if_else(mode == 1, "Major", "Minor")) %>% 
+  gather(key = "key", value = "value", -musickey,-mode) %>% 
+  group_by(musickey, mode, key) %>% 
+  summarise(mean = mean(value)) %>% 
+  ggplot(aes(x = musickey, y = mean, fill = musickey)) + 
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~key + mode, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = "none")
+
+#This plot makes it easier to find the differences for each key 
+#Why is C# the highest for speechiness? 
+#Valence with major and minor is interesting especially since traditionally minor is for sad music and major is for happy music 
+#I would have expected minor valence to be much smaller than major valence
+```
+
+```{r, fig.height= 8, fig.width= 10}
+
+#Is major better than minor? 
+spotifyDf %>% 
+  mutate(mode = if_else(mode == 1, "Major", "Minor")) %>% 
+  select(-key) %>% 
+  gather(key = "key", value = "value", -mode) %>% 
+  group_by(mode) %>% 
+  ggplot(aes(x = mode, y = value, fill = key)) + 
+  geom_boxplot() + 
+  facet_wrap(~key, scales = "free")
+
+#Visual inspection shows major and minor means may be the same 
+```
+
+
+
+
+```{r}
+
+spotifyDf %>% 
+  mutate(mode = if_else(mode == 1, "Major", "Minor")) %>% 
+  select(-key) %>% 
+  gather(key = "key", value = "value", -mode) %>% 
+  group_by(key) %>% 
+  do(broom::tidy(t.test(value~mode, data = .))) %>% 
+  select(key, p.value) %>% 
+  ggplot(aes(x = reorder(key, p.value), y = p.value, color = key)) + 
+  geom_point() + 
+  geom_segment(aes(xend = key, yend = 0)) + 
+  geom_hline(yintercept = .05, color = "red", linetype = "dotted") + 
+  theme(axis.text.x = element_text(angle = 90))
+
+#T test reveals speechiness, danceability, loudness, minutes, and tempo means may be different due to pvalues being statistically significant with a cut-off value of .05
+```
+
+
+
+
+
+```{r, fig.width = 14, fig.height= 8}
+#Analyzing relationship of spotify features, are danceaility and energy correlated? What about valence (happieness)? 
+
+spotifyDf %>% 
+  select(-key, -mode, -minutes) %>% 
+  as.matrix() %>% 
+  cor() %>% 
+  corrplot::corrplot.mixed()
+
+spotifyDf %>% 
+  select(-key, -mode, -minutes) %>% 
+  as.matrix() %>% 
+  cor()
+
+```
+
+
+
+
+
+```{r}
+
+spotifyDf %>% 
+  select(-key, -mode, -minutes) %>% 
+  as.matrix() %>% 
+  cor() %>% 
+  broom::tidy() %>% 
+  gather(key = "key", value = "value", -".rownames") %>% 
+  filter(.rownames != key) %>% 
+  distinct(value, .keep_all = TRUE) %>% 
+  arrange(-abs(value)) 
+  
+#Loudness and energy are positively correlated
+#Accousticness and energy are negatively correltated 
+#This makes sense loudness = energy
+#Accoustiness is a measurement of how likely the song is accoustic which makes sense for it being negatively correlated with loudness
+#However, it is interesting how accousticness is negatively correlated with energy
+```
+
+
+
+
+```{r}
+#What keys have the most amount of energy? What about danceability? 
+spotifyDf %>% 
+  mutate(mode = if_else(mode == 1, "Major", "Minor")) %>% 
+  rename(., "musickey" = key) %>% 
+  mutate(musickey = paste(musickey, mode)) %>% 
+  select(-mode, -minutes) %>% 
+  gather(key = "key", value = "value", -musickey) %>% 
+  group_by(key, musickey) %>% 
+  summarise(mean = mean(value)) %>% 
+  group_by(key) %>% 
+  top_n(mean, n =5) %>% 
+  arrange(-mean) %>% 
+  ggplot(aes(x = tidytext::reorder_within(musickey, mean, key) , y = mean, fill = musickey)) + 
+  tidytext::scale_x_reordered() +
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~key, scales = "free") + 
+  theme(legend.position = "none")
+```
+
+
+```{r}
+#This time I am going to ignore the mode to get a better summary of the keys 
+
+spotifyDf %>% 
+  select(-mode, -minutes) %>% 
+  rename(., musickey = "key") %>% 
+  gather(key = "key", value = "value", -musickey) %>% 
+  group_by(key, musickey) %>% 
+  summarise(mean = mean(value)) %>% 
+  group_by(key) %>% 
+  top_n(mean, n =5) %>% 
+  arrange(-mean) %>% 
+  ggplot(aes(x = tidytext::reorder_within(musickey, mean, key) , y = mean, fill = musickey)) + 
+  tidytext::scale_x_reordered() +
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~key, scales = "free") + 
+  theme(legend.position = "none")
+
+```
+
+
+```{r}
+#Let's compare the keys and its mean differences 
+#Since I want to compare the means of more than 2 groups, I will use a one-way ANOVA test 
+spotifyDf %>% 
+  select(-mode) %>% 
+  rename(., "musickey" = key) %>% 
+  gather(key = "features", value = "value", -musickey) %>% 
+  group_by(features) %>% 
+  do(broom::tidy(aov(value~musickey, data = .))) %>% 
+  select(p.value) %>% 
+  filter(!is.na(p.value)) %>% 
+  ggplot(aes(x = features, y = p.value, color = features)) + 
+  geom_point() + 
+  geom_segment(aes(xend = features, yend = 0)) + 
+  geom_hline(yintercept = .05, color = "red", linetype = "dashed") + 
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = "none")
+
+#Every group has p-values less than .05 which means it is statistically significant
+#At least one mean within the musickeys are different from the rest of the group
+```
+
+
+
+
+
+
+
+```{r, fig.width=11, fig.height=8}
+#Looking at the means of every music key by spotify features 
+spotifyDf %>% 
+  select(-mode) %>% 
+  rename(., "musickey" = key) %>% 
+  gather(key = "features", value = "value", -musickey) %>% 
+  group_by(musickey,features) %>% 
+  summarise(mean = mean(value)) %>% 
+  mutate(mean = if_else(features == "loudness", -mean, mean)) %>% 
+  ggplot(aes(x = tidytext::reorder_within(musickey, mean, features) , y = mean, fill = musickey)) +
+  geom_col(size = 1) + 
+  tidytext::scale_x_reordered() + 
+  coord_flip() +
+  facet_wrap(~features, scales = "free") + 
+  theme(legend.position = "none")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
