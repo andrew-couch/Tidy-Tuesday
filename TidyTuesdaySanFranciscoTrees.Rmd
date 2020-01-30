@@ -1,0 +1,116 @@
+---
+title: "TidyTuesday 1/29/20"
+author: "Andrew Couch"
+date: "1/29/2020"
+output: rmarkdown::github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, include = FALSE, echo = FALSE}
+library(tidyverse)
+df <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-28/sf_trees.csv')
+
+```
+
+```{r}
+df %>% glimpse()
+```
+
+```{r}
+#Viewing NAs 
+df %>%
+  is.na() %>% 
+  colSums()
+```
+
+```{r}
+options(scipen = 999)
+df %>%
+  select(caretaker) %>%
+  mutate(caretaker = fct_lump(caretaker, n = 10)) %>% 
+  count(caretaker, caretaker, sort = TRUE) %>% 
+  ggplot(aes(x = reorder(caretaker, n), y = n, fill = caretaker)) +
+  geom_col() + 
+  coord_flip() + 
+  scale_y_log10() + 
+  theme(legend.position = "none") +
+  ylab("") + 
+  xlab("")
+
+#Most caretakers are private 
+```
+
+```{r}
+#Let's look at tree species 
+df %>% 
+  select(species) %>% 
+  count(species, species, sort = TRUE)
+#After the :: is the common name
+```
+
+
+
+```{r}
+#Remove the common name from the species
+df <- df %>% 
+  mutate(species = gsub("(::)*", "", species))
+  
+```
+
+
+
+```{r}
+df %>% 
+  select(legal_status) %>% 
+  filter(!is.na(legal_status)) %>% 
+  count(legal_status, legal_status, sort = TRUE) %>% 
+  ggplot(aes(x = reorder(legal_status, -n), y = n, fill = legal_status)) + 
+  geom_col() + 
+  scale_y_log10() + 
+  theme(legend.position = "none", 
+        axis.text.x = element_text(angle = 90)) + 
+  xlab("")
+
+```
+
+
+
+
+```{r}
+df <- df %>% 
+  mutate(date = (Sys.Date() - date)/365.25) %>% 
+  mutate(date = date %>% as.numeric() %>% round(digits = 2)) 
+
+#Looking at ages of the trees
+df %>%
+  select(date) %>% 
+  ggplot(aes(x = date)) + 
+  geom_histogram(fill = "red", color = "white")
+```
+
+
+
+```{r}
+
+#Find the places with the most amount of trees 
+df %>% 
+  select(address, site_order) %>% 
+  group_by(address) %>% 
+  filter(site_order == max(site_order)) %>% 
+  ungroup() %>% 
+  top_n(site_order, n = 10) %>% 
+  arrange(-site_order) %>% 
+  mutate(address = reorder(address, site_order)) %>% 
+  ggplot(aes(x = address, y = site_order, fill = address)) + 
+  geom_col() + 
+  coord_flip() + 
+  theme(legend.position = "none") +
+  ylab("Number of Trees at Address") + 
+  xlab("Address")
+
+```
+
+
+
