@@ -1,0 +1,211 @@
+---
+title: "TidyTuesdayNFLAttendance"
+author: "Andrew Couch"
+date: "2/4/2020"
+output: rmarkdown::github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, include=FALSE}
+library(tidyverse)
+attendance <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-04/attendance.csv')
+standings <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-04/standings.csv')
+games <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-04/games.csv')
+
+```
+
+```{r}
+
+attendance %>% glimpse()
+standings %>% glimpse()
+games %>% glimpse()
+```
+
+```{r, fig.height = 10, fig.width = 20}
+#What are the distributions of game metrics by week? 
+#Are there any seasonal trends? 
+games %>% 
+  select(week, (10:15)) %>% 
+  filter(!week %in% c("WildCard", "SuperBowl", "Division","ConfChamp")) %>% 
+  gather(key = "key", value = "value", -week) %>%
+  mutate(week = reorder(week, week %>% as.numeric())) %>% 
+  ggplot(aes(x = week, y= value, color = key)) + 
+  geom_boxplot() + 
+  facet_wrap(~key, scales = "free") + 
+  theme(legend.position = "none")
+```
+
+```{r, fig.width = 20, fig.height=20}
+#How do teams perform when they're playing at home vs playing awawy? 
+
+games %>% 
+  select(home = home_team_name, away = away_team_name, (10:15)) %>%
+  gather(key = "key", value = "value", -home, -away) %>%
+  gather(key = "homeaway", value = "team", -key, -value) %>% 
+  select(team, homeaway, key, value) %>% 
+  group_by(homeaway, team, key) %>% 
+  summarise(mean = mean(value)) %>%
+  pivot_wider(names_from = "homeaway", values_from = "mean") %>% 
+  mutate(margin = home-away) %>% 
+  gather(key = "homeaway", value = "value", -key, -margin, -team) %>% 
+  ggplot(aes(x = reorder(team, -margin), y = value, fill = homeaway)) + 
+  geom_col(color = "white", position = "dodge") + 
+  facet_wrap(~key, scales = "free") + 
+  coord_flip() + 
+  theme(legend.position = "top")
+  
+
+```
+
+```{r, fig.height=15,fig.width=15}
+#Better visual for looking at how teams perform home and away for all of the metrics
+games %>% 
+  select(home = home_team_name, away = away_team_name, (10:15)) %>%
+  gather(key = "key", value = "value", -home, -away) %>%
+  gather(key = "homeaway", value = "team", -key, -value) %>% 
+  select(team, homeaway, key, value) %>% 
+  group_by(homeaway, team, key) %>% 
+  summarise(mean = mean(value)) %>%
+  pivot_wider(names_from = "homeaway", values_from = "mean") %>% 
+  mutate(margin = home-away) %>% 
+  select(team, key, margin) %>% 
+  mutate(advantage = if_else(margin > 0, "Better at Home", "Better at Away")) %>% 
+  ggplot(aes(x = reorder(team, margin), y = margin, color = advantage)) +
+  geom_point() + 
+  geom_segment(aes(xend = team, yend = 0)) + 
+  facet_wrap(~key, scales = "free") + 
+  theme(legend.position = "top") +
+  xlab("") +
+  ylab("") + 
+  coord_flip()
+```
+
+
+
+
+```{r, fig.height = 20, fig.width = 20}
+#Exploring the statistical significance using ttest
+library(broom)
+games %>% 
+  select(home = home_team_name, away = away_team_name, (10:15)) %>%
+  gather(key = "key", value = "value", -home, -away) %>%
+  gather(key = "homeaway", value = "team", -key, -value) %>% 
+  select(team, homeaway, key, value) %>% 
+  group_by(team, key) %>% 
+  do(ttest = tidy(t.test(value~homeaway, data = (.)))) %>% 
+  unnest(ttest) %>% 
+  select(team, key, p.value) %>% 
+  ggplot(aes(x = key, y = p.value, color = team)) + 
+  geom_point() + 
+  geom_segment(aes(xend = key, yend = 0)) + 
+  geom_hline(yintercept = .05, linetype = "dashed", color = "red") + 
+  facet_wrap(~team, scales = "free") + 
+  theme(legend.position = "none") + 
+  coord_flip()
+```
+
+
+
+```{r}
+#Teams and their metrics that are statistically significant if they play home or away
+  games %>% 
+  select(home = home_team_name, away = away_team_name, (10:15)) %>%
+  gather(key = "key", value = "value", -home, -away) %>%
+  gather(key = "homeaway", value = "team", -key, -value) %>% 
+  select(team, homeaway, key, value) %>% 
+  group_by(team, key) %>% 
+  do(ttest = tidy(t.test(value~homeaway, data = (.)))) %>% 
+  unnest(ttest) %>% 
+  select(team, key, p.value) %>% 
+  filter(p.value <= .05) %>% 
+  arrange(team, key)
+```
+
+
+```{r,fig.width=20}
+
+#How are team's attendance throughout the years? 
+options(scipen = 999)
+attendance %>% 
+  drop_na() %>% 
+  select(team_name, weekly_attendance, week, year) %>% 
+  group_by(team_name, year) %>% 
+  mutate(yearly_avg = mean(weekly_attendance)) %>% 
+  ggplot(aes(x = year, y = yearly_avg, color = team_name)) + 
+  geom_jitter(alpha = .2, aes(x = year, y = weekly_attendance, color = team_name)) +
+  geom_smooth(se = FALSE) + 
+  facet_wrap(~team_name, scales = "fixed") + 
+  theme(legend.position = "none")
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+#What are the weekly distributions? 
+attendance %>% 
+  select(-team) %>% 
+  mutate(week = as.character(week)) %>% 
+  left_join(games %>% select(year, week, home_team_name, away_team_name), by = c("team_name" = "home_team_name", "year" = "year", "week" = "week")) %>% 
+  drop_na() %>% 
+  select(home = team_name, away = away_team_name, year, week, weekly_attendance) %>%
+  group_by(home, away) %>% 
+  ggplot(aes(x = weekly_attendance)) + geom_histogram(fill = "blue", color = "white")
+```
+
+```{r, fig.height=20, fig.width=20}
+#What about by team? 
+attendance %>% 
+  select(-team) %>% 
+  mutate(week = as.character(week)) %>% 
+  left_join(games %>% select(year, week, home_team_name, away_team_name), by = c("team_name" = "home_team_name", "year" = "year", "week" = "week")) %>% 
+  drop_na() %>% 
+  select(home = team_name, away = away_team_name, year, week, weekly_attendance) %>%
+  group_by(home, away) %>% 
+  ungroup() %>% 
+  select(home, weekly_attendance) %>% 
+  ggplot(aes(x = weekly_attendance, fill = home)) + 
+  geom_histogram() + 
+  facet_wrap(~home, scales = "free") + 
+  theme(legend.position = "none")
+```
+
+
+
+
+```{r, fig.height = 15, fig.width = 15}
+#Who are each team's biggest rivals?  (This is the the team with the most average attendance vs a team)
+attendance %>% 
+  select(-team) %>% 
+  mutate(week = as.character(week)) %>% 
+  left_join(games %>% select(year, week, home_team_name, away_team_name), by = c("team_name" = "home_team_name", "year" = "year", "week" = "week")) %>% 
+  drop_na() %>% 
+  select(home = team_name, away = away_team_name, year, week, weekly_attendance) %>%
+  group_by(home) %>% 
+  mutate(average_attendance = mean(weekly_attendance)) %>% 
+  group_by(home, away) %>% 
+  mutate(rival_attendance = mean(weekly_attendance)) %>% 
+  select(home, away, average_attendance, rival_attendance) %>% 
+  arrange(home) %>% 
+  unique() %>% 
+  ungroup() %>% 
+  mutate(average = mean(rival_attendance)) %>% 
+  ggplot(aes(x = home, y= away, fill = rival_attendance)) + 
+  geom_tile() + 
+  scale_x_discrete(position = "top") +
+  theme(axis.text.x = element_text(angle = 45, hjust = -.1),
+        legend.position = "top",
+        legend.key.width = unit(3, "cm")) + 
+  scale_fill_gradient2(midpoint = 67574, high = "blue", low = "red")
+```
+
