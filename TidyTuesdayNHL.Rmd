@@ -1,0 +1,227 @@
+---
+title: "TidyTuesdayNHL"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+game_goals <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-03/game_goals.csv')
+
+top_250 <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-03/top_250.csv')
+
+season_goals <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-03/season_goals.csv')
+```
+
+```{r}
+
+game_goals %>% 
+  glimpse()
+
+```
+
+
+```{r}
+
+
+game_goals %>% 
+  select(goals, player, season, game_num, age, team, opp, location,assists, shots) %>% 
+  count(player)
+
+```
+
+
+```{r}
+
+
+df <- game_goals %>% 
+  select(goals, player, season, game_num, age, team, opp, location,assists, shots) 
+
+
+df %>% 
+  group_by(player) %>% 
+  summarise(total_goals = sum(goals),
+            total_assits = sum(assists),
+            total_shots = sum(shots)) %>% 
+  mutate(shots_per_goal  = total_shots / total_goals) %>% 
+  ggplot(aes(x = total_shots, y = total_goals)) + geom_point() + geom_smooth()
+
+```
+
+
+
+```{r}
+df %>% 
+  select(assists, shots, goals) %>% 
+  gather(key = "key", value = "value", -goals) %>% 
+  ggplot(aes(x = value, y = goals, color = key)) + 
+  geom_jitter(alpha = .1) + 
+  geom_smooth() + 
+  facet_wrap(~key, scales = "free")
+```
+
+
+
+
+
+```{r}
+model_data <- df %>% 
+  group_by(player) %>% 
+  mutate(total_goals = sum(goals)) %>% 
+  ungroup() %>% 
+  mutate(rank = dense_rank(-total_goals)) %>% 
+  mutate(rank = floor(rank/10) + 1) %>% 
+  separate(age, into = c("year", "days")) %>% 
+  mutate(age = as.integer(year) + as.numeric(days)/365) %>% 
+  select(-year, -days,-season, -total_goals) %>% 
+  group_by(rank) %>% 
+  mutate(standardized_game_num = (game_num - mean(game_num)) / sd(game_num)) %>% 
+  ungroup() %>% 
+  select(-player, -game_num) %>% 
+  select(rank, goals, everything())
+
+```
+
+
+
+
+
+
+
+```{r, fig.height=20, fig.width=20}
+library(broom)
+
+model_data %>% 
+  group_by(rank) %>% 
+  do(linear_model = lm(goals~. -rank , data = .)) %>% 
+  tidy(linear_model) %>% 
+  filter(p.value <= .05) %>% 
+  ggplot(aes(x = reorder(term, estimate), y = estimate, fill = rank)) +
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~rank, scales = "free")
+
+
+```
+
+
+
+
+```{r}
+model_data %>% 
+  group_by(rank) %>% 
+  do(linear_model = lm(goals~. -rank+ 0, data = .)) %>% 
+  tidy(linear_model) %>% 
+  filter(p.value <= .05) %>% 
+  ggplot(aes(x = reorder(term, estimate), y = estimate, fill = rank)) +
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~rank, scales = "free")
+```
+
+
+```{r, fig.width = 20, fig.width = 20}
+model_data %>% 
+  group_by(rank) %>% 
+  do(linear_model = lm(goals~.+ opp*shots -rank + 0, data = .)) %>% 
+  tidy(linear_model) %>% 
+  filter(p.value <= .05) %>%  
+  ggplot(aes(x = reorder(term, estimate), y = estimate, fill = rank)) +
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~rank, scales = "free")
+  
+```
+
+
+
+
+
+```{r}
+model_data %>% 
+  group_by(rank) %>% 
+  do(linear_model = lm(goals~.+ opp*shots + opp:team -rank + 0, data = .)) %>% 
+  tidy(linear_model) %>% 
+  filter(p.value <= .05) %>%  
+  ggplot(aes(x = reorder(term, estimate), y = estimate, fill = rank)) +
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~rank, scales = "free")
+```
+
+
+
+
+```{r}
+model_data %>% 
+  select(-opp, -team) %>% 
+  group_by(rank) %>% 
+  do(linear_model = lm(goals~.-rank +shots*location + assists*shots + 0, data = .)) %>% 
+  tidy(linear_model) %>% 
+  filter(p.value <= .05) %>%  
+  ggplot(aes(x = reorder(term, estimate), y = estimate, fill = rank)) +
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~rank, scales = "free")
+
+
+
+```
+
+
+```{r}
+model_data %>% 
+  select(-opp, -team) %>% 
+  group_by(rank) %>% 
+  do(linear_model = lm(goals~.-rank +shots*location + assists*shots + 0, data = .)) %>% 
+  glance(linear_model)
+```
+
+
+```{r}
+model_data %>% 
+  group_by(rank) %>% 
+  do(linear_model = lm(goals~.+ opp*shots + opp*team -rank  + shots*location + assists*shots+ 0, data = .)) %>% 
+  glance(linear_model) 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
