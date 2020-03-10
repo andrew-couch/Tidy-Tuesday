@@ -1,5 +1,5 @@
 ---
-title: "TidyTuesdayUniversity"
+title: "TidyTuesdayUniversityTuition"
 output: github_document
 ---
 
@@ -8,11 +8,8 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-
-
 ```{r}
 library(tidyverse)
-
 
 tuition_cost <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/tuition_cost.csv')
 
@@ -23,222 +20,158 @@ salary_potential <- readr::read_csv('https://raw.githubusercontent.com/rfordatas
 historical_tuition <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/historical_tuition.csv')
 
 diversity_school <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/diversity_school.csv')
-
 ```
 
+```{r}
+historical_tuition %>% ggplot(aes(x = year, y = tuition_cost, color = type, group = type)) + geom_smooth() + geom_point()
+```
 
-```{r,fig.height=12, fig.width=20}
+```{r}
 historical_tuition %>% 
-  ggplot(aes(x = year, y= tuition_cost, color = tuition_type, group = tuition_type)) + 
-  geom_smooth(se = FALSE) + 
-  geom_jitter() + 
-  facet_grid(~type, scales = "fixed")
+  group_by(type) %>% 
+  summarise(min = min(tuition_cost),
+            max = max(tuition_cost)) %>% 
+  ungroup() %>% 
+  mutate(range = max - min)
+```
+
+
+```{r}
+college_df <- tuition_cost %>% left_join(salary_potential, by = "name") %>% drop_na()
+
+
+```
+
+```{r}
+college_df %>% 
+  select(everything(), -name, -state_code, -type, -degree_length, -state_name, -rank) %>% 
+  gather(key = "key", value = "value", -state) %>% 
+  group_by(state, key) %>% 
+  mutate(value = as.numeric(value)) %>% 
+  summarise(min = min(value),
+            median = median(value),
+            average = mean(value),
+            max = max(value)) %>% 
+  group_by(key) %>% 
+  top_n(median, n = 5) %>% 
+  ggplot(aes(x = state, y = median, fill = state)) + 
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~key, scales = "free") + 
+  theme(legend.position = "none")
+  
+```
+
+```{r}
+college_df %>% 
+  select(in_state_total, out_of_state_total, early_career_pay, mid_career_pay) %>% 
+  gather(key = "key", value = "value", -in_state_total, -out_of_state_total) %>% 
+  gather(key = "key2", value = "value2", -key, -value) %>% 
+  ggplot(aes(x = value, y = value2, color = key)) + 
+  geom_point() +
+  facet_wrap(~key2, scales = "fixed")
 ```
 
 
 
-```{r, fig.width = 15}
 
-options(scipen = 999)
-tuition_cost %>% 
+
+```{r}
+college_df %>% 
+  select(in_state_total, out_of_state_total, early_career_pay, mid_career_pay) %>% summary()
+```
+
+
+```{r}
+model_data <- college_df %>%
   filter(degree_length == "4 Year") %>% 
-  select(name, state_code, type, in_state_total, out_of_state_total, room_and_board) %>% 
-  mutate(in_vs_out = out_of_state_total - in_state_total) %>% 
-  gather(key = "key", value = "value", -name, -state_code, -type) %>% 
-  group_by(type, key) %>% 
-  top_n(value, n = 5) %>% 
-  ungroup() %>% 
-  ggplot(aes(x = type, y = value, fill = type)) + geom_col() + facet_wrap(~key, scales = "fixed")
-
-
-```
-
-```{r,fig.height=15, fig.width=15}
-tuition_cost %>% 
-  filter(degree_length == "4 Year") %>% 
-  select(name, state_code, type, in_state_total, out_of_state_total, room_and_board) %>% 
-  mutate(in_vs_out = out_of_state_total - in_state_total) %>% 
-  gather(key = "key", value = "value", -name, -state_code, -type) %>% 
-  ggplot(aes(x = type, y = value, color = type)) + 
-  geom_boxplot() + 
-  facet_wrap(~key, scales = "free")
+  select(-in_state_tuition, -out_of_state_tuition, -state_name, -degree_length, -room_and_board, -state) 
 ```
 
 
 
 ```{r}
-tuition_income %>% 
-  ggplot(aes(x = income_lvl, y = total_price)) + geom_boxplot() + scale_y_log10()
-
-
-```
-
-
-
-```{r, fig.height=15, fig.width=15}
-
-
-income_cost_df <- tuition_cost %>% select(name, in_state_total, out_of_state_total) %>% 
-  left_join(tuition_income  %>% select(name, total_price, net_cost, income_lvl),
-            by = "name")
-
-income_cost_df %>% 
-  select(-1) %>% 
-  gather(key = "key", value = "value", -income_lvl) %>% 
-  drop_na() %>% 
-  ggplot(aes(x = income_lvl, y = value, color = key)) +
-  geom_boxplot() + 
-  coord_flip() +
-  facet_wrap(~key, scales = "free")
-
-```
-
-
-
-```{r, fig.height=15, fig.width=15}
-salary_potential %>% 
-  select(-rank) %>% 
-  gather(key = "key", value = "value", -name, -state_name) %>% 
-  group_by(state_name, key) %>% 
-  top_n(value, n = 10) %>% 
-  ungroup() %>% 
-  filter(state_name == "Iowa") %>% 
-  filter(key %in% c("early_career_pay", "mid_career_pay")) %>% 
-  ggplot(aes(x = key, y = value, color = name, group = name)) + geom_point() + geom_line() 
-
-```
-
-```{r}
-salary_potential %>% 
-  select(-rank) %>% 
-  gather(key = "key", value = "value", -name, -state_name) %>% 
-  group_by(state_name, key) %>% 
-  top_n(value, n = 10) %>% 
-  ungroup() %>% 
-  filter(state_name == "Iowa") %>% 
-  filter(key %in% c("early_career_pay", "mid_career_pay")) %>% 
-  arrange(desc(value))
-```
-
-
-
-
-```{r}
-salary_potential %>% 
-  select(-rank) %>% 
-  gather(key = "key", value = "value", -name, -state_name) %>% 
-  filter(state_name == "Iowa") %>% 
-  filter(key == "stem_percent") %>% 
-  arrange(desc(value))
-```
-
-```{r}
-salary_potential %>% 
-  select(stem_percent, early_career_pay, mid_career_pay) %>% 
-  cor() %>% 
-  broom::tidy()
-```
-
-```{r}
-salary_potential %>% 
-  select(stem_percent, early_career_pay, mid_career_pay) %>% 
-  gather(key = "key", value = "value", -stem_percent) %>% 
-  ggplot(aes(x = stem_percent, y= value, color = key)) + 
-  geom_smooth() + 
-  geom_point() + 
-  scale_y_log10() + 
-  facet_wrap(~key, scales = "free") 
-```
-
-```{r}
-
-college_df <- salary_potential %>% left_join(tuition_income, by = "name")
-
+model_data <- model_data %>% 
+  mutate(tuition_total = (in_state_total + out_of_state_total) /2) %>% 
+  select(-in_state_total, -out_of_state_total, -rank)
 ```
 
 
 
 ```{r}
-college_df <- college_df %>% 
-  select(name, state_name, early_career_pay, mid_career_pay, make_world_better_percent, net_cost, year) %>% 
-  group_by(name) %>% 
-  filter(year == max(year)) %>% 
-  mutate(net_cost = mean(net_cost)) %>% 
-  select(-year) %>% 
-  ungroup() %>% 
-  unique()
+model_data <- model_data %>% 
+  select(-stem_percent)
 ```
-
-
-
-
-
-
-
 ```{r}
-college_df %>% 
-  select(name, state_name, early_career_pay, mid_career_pay, make_world_better_percent, net_cost, year) %>% 
-  ggplot(aes(y = net_cost)) + geom_boxplot() 
-```
 
-
-```{r}
-college_df %>% 
-  select(name, state_name, early_career_pay, mid_career_pay, make_world_better_percent, net_cost, year) %>% 
-  select(net_cost) %>% summary()
-```
-
-
-
-```{r, fig.height=10, fig.width=15}
-college_df %>% 
-  select(early_career_pay, mid_career_pay, net_cost) %>% 
-  gather(key = "key", value = "value", -net_cost) %>% 
-  ggplot(aes(x = net_cost, y = value, color = key))  + 
-  geom_point() + 
-  geom_abline(slope = 1, intercept = 0) + 
-  scale_y_log10() + scale_x_log10() + 
-  facet_wrap(~key ,scales = "free")
-```
-
-
-
-
-```{r}
 library(broom)
-college_df %>% 
-  lm(net_cost~. -name + state_name*. + 0, data = .) %>% 
-  tidy() %>% 
-  filter(p.value <= .05)
+library(caret)
+model_data
+
+trainIndex <- createDataPartition(model_data$tuition_total, p = .8, list = FALSE)
+
+train_data <- model_data[trainIndex,]
+test_data <- model_data[-trainIndex,]
 ```
 
 
+
 ```{r}
-colleges_eval <- college_df %>% 
-  lm(net_cost~early_career_pay + mid_career_pay, data = .) %>% 
-  augment() 
+
+baseLine_model <- lm(tuition_total~state_code + type + early_career_pay  + mid_career_pay + make_world_better_percent + state_code*type, data = model_data) 
+
+
 ```
 
+
+
+
+
 ```{r}
-
-
-college_df %>% select(name) %>% cbind(colleges_eval) %>% 
-  select(name, net_cost, .fitted) %>% 
-  mutate(discount = .fitted - net_cost) %>% 
-  filter(net_cost != 0) %>% 
+baseLine_model %>% 
+  augment() %>%
+  cbind(model_data %>% select(name)) %>% 
+  select(name, actual =tuition_total, predicted = .fitted, mid_career_pay, early_career_pay) %>% 
+  mutate(discount = predicted - actual) %>% 
   top_n(discount, n = 25) %>% 
   arrange(desc(discount))
 
+
+
 ```
+
+
+```{r}
+baseLine_model %>% 
+  augment() %>%
+  cbind(model_data %>% select(name)) %>% 
+  select(name, actual =tuition_total, predicted = .fitted, mid_career_pay, early_career_pay) %>% 
+  mutate(discount = predicted - actual) %>% 
+  ggplot(aes(x = actual, y = discount)) + geom_point()
+```
+
 
 
 
 
 ```{r}
-tuition_income %>% filter(name == "Harvard University") %>% 
-  filter(year == 2018) %>% 
-  select(net_cost) %>% 
-  summarise(mean = mean(net_cost))
-
+baseLine_model %>% 
+  augment() %>%
+  cbind(model_data %>% select(name)) %>% 
+  select(name, actual =tuition_total, predicted = .fitted, mid_career_pay, early_career_pay) %>% 
+  mutate(discount = predicted - actual) %>% 
+  filter(name == "University of Iowa")
 ```
+
+
+
+
+
+
+
+
+
+
+
+
 
