@@ -1,0 +1,41 @@
+---
+title: "TidyTuesdayNHL"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r,echo=FALSE,warning=FALSE,include=FALSE}
+library(tidyverse)
+game_goals <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-03/game_goals.csv')
+top_250 <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-03/top_250.csv')
+season_goals <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-03/season_goals.csv')
+
+```
+
+```{r}
+
+game_goals %>% glimpse()
+
+```
+```{r}
+
+season_goals %>% glimpse()
+
+```
+
+```{r}
+
+top_250 %>% glimpse()
+
+```
+
+```{r}
+game_goals
+
+season_goals
+```
+

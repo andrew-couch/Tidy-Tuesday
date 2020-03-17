@@ -1,0 +1,280 @@
+---
+title: "TidyTuesdadyOffice"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(schrute)
+
+
+
+df <- schrute::theoffice
+```
+
+
+
+```{r}
+df %>% glimpse()
+```
+
+```{r}
+df %>% head()
+```
+
+
+
+
+```{r}
+#Most characters only appear once, if more than once than the character is probably a show regular
+df %>% 
+  select(season, episode, character) %>% 
+  unique() %>% 
+  count(character, sort = TRUE) %>% 
+  summary()
+```
+
+
+
+```{r}
+df %>% 
+  select(season, episode, character) %>% 
+  unique() %>% 
+  count(character, sort = TRUE) %>% 
+  filter(n > 1) %>% 
+  ggplot(aes(y = n)) + geom_boxplot() + scale_y_log10()
+```
+
+
+
+
+
+```{r}
+
+
+characters <- df %>% 
+  select(season, episode, character) %>% 
+  unique() %>% 
+  count(character, sort = TRUE) %>% 
+  select(character) %>% 
+  slice(1:20)
+
+
+```
+
+
+
+
+
+```{r}
+df %>% 
+  select(season, episode, writer) %>% 
+  unique() %>% 
+  count(writer, sort = TRUE)
+```
+
+
+
+```{r}
+#Gene and Lee as a duo wrote a lot of episodes together
+df %>% 
+  select(season, episode, writer) %>% 
+  unique() %>% 
+  count(writer, sort = TRUE) %>% 
+  filter(str_detect(writer, ";"))
+
+
+
+```
+
+
+
+
+
+
+```{r, fig.height=15, fig.width =15}
+
+library(tidytext)
+
+word_df <- df %>% 
+  unnest_tokens("word", "text") 
+
+
+#Top 5 words with stop word removal
+word_df %>% 
+  inner_join(characters) %>% 
+  count(character, word) %>% 
+  anti_join(stop_words) %>% 
+  group_by(character) %>% 
+  top_n(n, n = 5) %>% 
+  ggplot(aes(x = reorder_within(word, n, character), y = n, fill = character)) +
+  geom_col() + 
+  scale_x_reordered() + 
+  coord_flip() + 
+  facet_wrap(~character, scales = "free") + 
+  theme(legend.position = "none")
+```
+
+
+
+```{r, fig.height=15, fig.width=15}
+word_df %>% 
+  inner_join(characters) %>% 
+  count(character, word) %>% 
+  anti_join(stop_words) %>% 
+  bind_tf_idf(word, character, n) %>% 
+  group_by(character) %>% 
+  top_n(tf_idf, n = 5) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = reorder_within(word, tf_idf, character), y = tf_idf, fill = character)) +
+  geom_col() + 
+  scale_x_reordered() + 
+  coord_flip() + 
+  facet_wrap(~character, scales = "free") + 
+  theme(legend.position = "none")
+```
+
+
+
+```{r}
+word_df %>% 
+  select(season, word) %>% 
+  inner_join(get_sentiments(lexicon = "bing")) %>% 
+  group_by(season) %>% 
+  count(sentiment) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = season, y = n, color = sentiment, group = sentiment)) + geom_point() + geom_smooth(se = FALSE)
+```
+
+
+```{r, fig.height = 10, fig.width = 15}
+word_df %>% 
+  select(season, word) %>% 
+  add_count(season, name = "season_word_count") %>% 
+  inner_join(get_sentiments(lexicon = "bing")) %>% 
+  group_by(season) %>% 
+  add_count(sentiment) %>% 
+  ungroup() %>% 
+  mutate(sentiment_score = n/season_word_count) %>% 
+  select(season, sentiment, sentiment_score) %>% 
+  unique() %>% 
+  ggplot(aes(x = season, y = sentiment_score, color = sentiment, group = sentiment)) + geom_point() + geom_smooth(se = FALSE)
+```
+
+
+
+
+
+```{r, fig.width = 10, fig.height=10}
+word_df %>% 
+  select(episode, character, word) %>% 
+  filter(character %in% c("Michael", "Dwight", "Jim")) %>% 
+  inner_join(get_sentiments(lexicon = "nrc")) %>% 
+  group_by(character, episode) %>% 
+  add_count(word, name = "word_count") %>% 
+  add_count(sentiment) %>% 
+  ungroup() %>% 
+  mutate(sentiment_score = n / word_count) %>% 
+  select(episode, character, sentiment, sentiment_score) %>% 
+  ggplot(aes(x = episode, y = sentiment_score, color = character, group = interaction(character, sentiment))) +
+  geom_point() + 
+  geom_smooth(se = FALSE) +
+  scale_y_log10() +
+  facet_wrap(~sentiment, scales = "fixed")
+
+```
+
+
+
+
+
+
+```{r}
+trigram <- df %>% 
+  select(character, text) %>% 
+  inner_join(characters) %>% 
+  unnest_tokens("ngrams", "text", token = "ngrams", n = 3) %>% 
+  count(character, ngrams)
+
+quadgram <- df %>% 
+  select(character, text) %>% 
+  inner_join(characters) %>% 
+  unnest_tokens("ngrams", "text", token = "ngrams", n = 4) %>% 
+  count(character, ngrams)
+
+
+
+```
+
+
+
+```{r}
+
+
+
+trigram <- trigram %>% 
+  bind_tf_idf(ngrams, character, n) %>% 
+  group_by(character) %>% 
+  top_n(tf_idf, n = 3) %>% 
+  ungroup()
+
+
+quadgram <- quadgram %>% 
+  bind_tf_idf(ngrams, character, n) %>% 
+  group_by(character) %>% 
+  top_n(tf_idf, n = 3) %>% 
+  ungroup()
+
+```
+
+
+
+
+
+
+
+```{r, fig.height=15, fig.width=15}
+trigram %>%
+  ggplot(aes(x = reorder_within(ngrams, tf_idf, character), y = tf_idf, fill = character)) + 
+  geom_col() + 
+  scale_x_reordered() + 
+  coord_flip() + 
+  facet_wrap(~character, scales = "free")
+```
+
+
+
+
+
+
+```{r, fig.height = 15, fig.width = 15}
+#Top 3 Catch phrases for each character 
+quadgram %>% 
+  group_by(character) %>% 
+  arrange(desc(tf_idf)) %>% 
+  slice(1:3) %>% 
+  ungroup() %>%
+  ggplot(aes(x = reorder_within(ngrams, tf_idf, character), y = tf_idf, fill = character)) + 
+  geom_col() + 
+  scale_x_reordered() + 
+  coord_flip() + 
+  facet_wrap(~character, scales = "free")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+

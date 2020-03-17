@@ -1,0 +1,67 @@
+---
+title: "Untitled"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+food_consumption <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-18/food_consumption.csv')
+```
+
+```{r}
+
+
+food_consumption %>% glimpse()
+```
+
+```{r}
+
+#130 countries with 11 food cateogries
+food_consumption %>% count(country)
+```
+
+```{r,fig.width=15, fig.height = 15}
+food_consumption %>% 
+  select(-country) %>% 
+  gather(key = "key", value = "value", -food_category) %>% 
+  group_by(key, food_category) %>% 
+  mutate(average_value = mean(value)) %>% 
+  ggplot(aes(x= key, y = value, color = key)) + 
+  geom_boxplot() + 
+  geom_jitter(alpha = .25) + 
+  geom_hline(aes(yintercept = average_value, color = key)) + 
+  scale_y_log10() + 
+  facet_wrap(~food_category, scales = "free") + 
+  coord_flip() + 
+  theme(legend.position = "none")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
