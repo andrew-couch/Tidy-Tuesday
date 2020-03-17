@@ -1,0 +1,177 @@
+---
+title: "TidyTuesdayUniversityTuition"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+
+tuition_cost <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/tuition_cost.csv')
+
+tuition_income <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/tuition_income.csv') 
+
+salary_potential <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/salary_potential.csv')
+
+historical_tuition <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/historical_tuition.csv')
+
+diversity_school <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/diversity_school.csv')
+```
+
+```{r}
+historical_tuition %>% ggplot(aes(x = year, y = tuition_cost, color = type, group = type)) + geom_smooth() + geom_point()
+```
+
+```{r}
+historical_tuition %>% 
+  group_by(type) %>% 
+  summarise(min = min(tuition_cost),
+            max = max(tuition_cost)) %>% 
+  ungroup() %>% 
+  mutate(range = max - min)
+```
+
+
+```{r}
+college_df <- tuition_cost %>% left_join(salary_potential, by = "name") %>% drop_na()
+
+
+```
+
+```{r}
+college_df %>% 
+  select(everything(), -name, -state_code, -type, -degree_length, -state_name, -rank) %>% 
+  gather(key = "key", value = "value", -state) %>% 
+  group_by(state, key) %>% 
+  mutate(value = as.numeric(value)) %>% 
+  summarise(min = min(value),
+            median = median(value),
+            average = mean(value),
+            max = max(value)) %>% 
+  group_by(key) %>% 
+  top_n(median, n = 5) %>% 
+  ggplot(aes(x = state, y = median, fill = state)) + 
+  geom_col() + 
+  coord_flip() + 
+  facet_wrap(~key, scales = "free") + 
+  theme(legend.position = "none")
+  
+```
+
+```{r}
+college_df %>% 
+  select(in_state_total, out_of_state_total, early_career_pay, mid_career_pay) %>% 
+  gather(key = "key", value = "value", -in_state_total, -out_of_state_total) %>% 
+  gather(key = "key2", value = "value2", -key, -value) %>% 
+  ggplot(aes(x = value, y = value2, color = key)) + 
+  geom_point() +
+  facet_wrap(~key2, scales = "fixed")
+```
+
+
+
+
+
+```{r}
+college_df %>% 
+  select(in_state_total, out_of_state_total, early_career_pay, mid_career_pay) %>% summary()
+```
+
+
+```{r}
+model_data <- college_df %>%
+  filter(degree_length == "4 Year") %>% 
+  select(-in_state_tuition, -out_of_state_tuition, -state_name, -degree_length, -room_and_board, -state) 
+```
+
+
+
+```{r}
+model_data <- model_data %>% 
+  mutate(tuition_total = (in_state_total + out_of_state_total) /2) %>% 
+  select(-in_state_total, -out_of_state_total, -rank)
+```
+
+
+
+```{r}
+model_data <- model_data %>% 
+  select(-stem_percent)
+```
+```{r}
+
+library(broom)
+library(caret)
+model_data
+
+trainIndex <- createDataPartition(model_data$tuition_total, p = .8, list = FALSE)
+
+train_data <- model_data[trainIndex,]
+test_data <- model_data[-trainIndex,]
+```
+
+
+
+```{r}
+
+baseLine_model <- lm(tuition_total~state_code + type + early_career_pay  + mid_career_pay + make_world_better_percent + state_code*type, data = model_data) 
+
+
+```
+
+
+
+
+
+```{r}
+baseLine_model %>% 
+  augment() %>%
+  cbind(model_data %>% select(name)) %>% 
+  select(name, actual =tuition_total, predicted = .fitted, mid_career_pay, early_career_pay) %>% 
+  mutate(discount = predicted - actual) %>% 
+  top_n(discount, n = 25) %>% 
+  arrange(desc(discount))
+
+
+
+```
+
+
+```{r}
+baseLine_model %>% 
+  augment() %>%
+  cbind(model_data %>% select(name)) %>% 
+  select(name, actual =tuition_total, predicted = .fitted, mid_career_pay, early_career_pay) %>% 
+  mutate(discount = predicted - actual) %>% 
+  ggplot(aes(x = actual, y = discount)) + geom_point()
+```
+
+
+
+
+
+```{r}
+baseLine_model %>% 
+  augment() %>%
+  cbind(model_data %>% select(name)) %>% 
+  select(name, actual =tuition_total, predicted = .fitted, mid_career_pay, early_career_pay) %>% 
+  mutate(discount = predicted - actual) %>% 
+  filter(name == "University of Iowa")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
