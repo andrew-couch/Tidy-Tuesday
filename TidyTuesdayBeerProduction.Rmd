@@ -1,0 +1,105 @@
+---
+title: "TidyTuesdayBeerProduction"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+brewing_materials <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-31/brewing_materials.csv')
+beer_taxed <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-31/beer_taxed.csv')
+brewer_size <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-31/brewer_size.csv')
+beer_states <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-31/beer_states.csv')
+```
+
+```{r, fig.width=15, fig.height=15}
+options(scipen = 999)
+library(geofacet)
+beer_states %>% 
+  filter(!state %in% c("total", "DC")) %>% 
+  ggplot(aes(x = year, y = barrels, color = type)) +
+  geom_line() + 
+  facet_geo(~ state, grid = "us_state_grid2", label = "name", scales = "free_y") +
+  theme(legend.position = "top", 
+        axis.text.x = element_blank())
+```
+
+
+
+```{r}
+us_ia_counties_grid1
+```
+
+
+
+```{r}
+model_data <- brewing_materials %>% 
+  select(year, month, type, month_current) %>% 
+  mutate(month = if_else(month < 10, paste(0, month, sep = ""), month %>% as.character()),
+         year = as.character(year),
+         ds = paste(year, month, "01", sep = "-") %>% as.Date()) %>% 
+  select(type, ds, month_current)
+  
+
+key <- model_data %>% 
+  select(type) %>% 
+  distinct() %>% 
+  mutate(name = c("Malt", "Corn", "Rice", "Barley", "Wheat", "Total_Grain", "Sugar", "Hops_Dry", "Hops_Extract", "Other", "Total_Non_Grain", "Total_Used"))
+
+key
+library(prophet)
+
+
+
+model_results <- data.frame()
+
+for (i in 1:10){
+  model <- model_data %>% 
+    filter(type ==  key$type[i]) %>% 
+    select(ds, y = month_current) %>% 
+    prophet()
+
+future <- make_future_dataframe(model, periods = 3)  
+
+results <- predict(model, future) %>% 
+  select(ds, yhat_lower, yhat_upper, yhat) %>% 
+  mutate(type = key$type[i],
+         ds = as.Date(ds)) %>% 
+  inner_join(model_data, by = c("type" = "type", "ds" = "ds"))
+
+model_results <- rbind(model_results, results)
+
+}
+
+
+```
+
+
+```{r, fig.height = 10, fig.width=15}
+model_results %>% 
+  ggplot(aes(x = ds, y = month_current, color = type)) + 
+  geom_line()  + 
+  geom_line(aes(x = ds, y = yhat), color = "black") +
+  facet_wrap(~type, scales = "free") + 
+  theme(legend.position = "none") + 
+  labs(title = "Forecasting with Prophet",
+       subtitle = "Forecasting Material Usage for Beer Companies")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

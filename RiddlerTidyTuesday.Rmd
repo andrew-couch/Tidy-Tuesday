@@ -1,0 +1,78 @@
+---
+title: "Riddler"
+author: "Andrew Couch"
+date: "3/31/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+
+# From Nick Harper comes a question of tempered temperatures:
+# 
+# On a warm, sunny day, Nick glanced at a thermometer, and noticed something quite interesting. When he toggled between the Fahrenheit and Celsius scales, the digits of the temperature — when rounded to the nearest degree — had switched. For example, this works for a temperature of 61 degrees Fahrenheit, which corresponds to a temperature of 16 degrees Celsius.
+# 
+# However, the temperature that day was not 61 degrees Fahrenheit. What was the temperature?
+
+tibble("F" = -30:150) %>% 
+  mutate(C = round((F- 32) * (5/9))) %>%
+  mutate_all(abs) %>% 
+  mutate_all(as.character) %>% 
+  mutate(C = stringi::stri_reverse(C)) %>% 
+  filter(F == C & F != 61)
+```
+
+```{r}
+# You have two fair coins, labeled A and B. When you flip coin A, you get 1 point if it comes up heads, but you lose 1 point if it comes up tails. Coin B is worth twice as much — when you flip coin B, you get 2 points if it comes up heads, but you lose 2 points if it comes up tails.
+# 
+# To play the game, you make a total of 100 flips. For each flip, you can choose either coin, and you know the outcomes of all the previous flips. In order to win, you must finish with a positive total score. In your eyes, finishing with 2 points is just as good as finishing with 200 points — any positive score is a win. (By the same token, finishing with 0 or −2 points is just as bad as finishing with −200 points.)
+# 
+# If you optimize your strategy, what percentage of games will you win? (Remember, one game consists of 100 coin flips.)
+# 
+# Extra credit: What if coin A isn’t fair (but coin B is still fair)? That is, if coin A comes up heads with probability p and you optimize your strategy, what percentage of games will you win?
+
+game <- function(prob){
+  tibble("Flip" = 1:100, 
+       "Coin_A" = rbinom(100 ,1,prob = prob), 
+       "Heads" = rbinom(100 ,1,prob = .5)) %>% 
+  mutate("Points" = case_when(
+    Coin_A == 1 & Heads == 1 ~ 1,
+    Coin_A == 1 & Heads == 0 ~ -1,
+    Coin_A == 0 & Heads == 1 ~ 2,
+    TRUE ~ -2
+  )) %>% 
+  summarise(Points = sum(Points)) %>% unlist()
+}
+
+game_results <- crossing(trials = 1:1000, probability = seq(from = 0, to = 1, by = .05)) %>% 
+  mutate(points = map_dbl(probability, game))
+
+
+game_results %>% 
+  mutate(win = if_else(points > 0, 1, 0)) %>% 
+  group_by(probability) %>% 
+  summarise(wins = sum(win)) %>% 
+  ungroup() %>% 
+  arrange(desc(wins)) %>% 
+  mutate(win_prob = wins/1000)
+
+
+# You can expect to win the majority of the time (51%) by choosing to Flip Coin A 65% of the time 
+```
+
+```{r}
+game_results %>% 
+  group_by(probability) %>% 
+  summarise(mean_points = mean(points),
+            median_points = median(points),
+            sd_points = sd(points),
+            win_prob = sum(if_else(points > 0, 1, 0))/1000) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = probability, y = win_prob, fill = win_prob)) + geom_col()
+```
+
