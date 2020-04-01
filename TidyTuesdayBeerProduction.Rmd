@@ -169,22 +169,39 @@ model_results %>%
 
 
 ```{r}
-state_forcast <- beer_states %>% 
-  filter(type == "Bottles and Cans") %>% 
-  select(state, ds = year, y = barrels) %>% 
-  mutate(ds = paste(ds, "01", "01", sep = "-") %>% as.Date()) %>% 
-  group_by(state) %>% 
-  do(model = prophet(.),
-     future = make_future_dataframe(model, 2),
-     results = predict(model, future)) 
+state_data <- beer_states %>% 
+  filter(type == "Bottles and Cans") %>%
+  select(state, ds = year, y = barrels) %>%
+  mutate(ds = paste(ds, "01", "01", sep = "-") %>% as.Date()) 
+```
 
+
+```{r}
+
+model_func <- function(state_name){
+  
+  data <- state_data %>% filter(state == state_name) %>% select(-state)
+  
+  model <- prophet(data)
+  
+  future <- make_future_dataframe(model, 2)
+  
+  results <- predict(model, future) %>% select(ds, yhat, yhat_upper, yhat_lower)
+  
+  return(results)
+}
+
+
+state_list <- state_data %>% select(state) %>% distinct() 
+results <- state_list %>% 
+  mutate(results = map(state, model_func))
 
 ```
 
 
 ```{r, fig.height = 15, fig.width = 15}
-state_forcast %>% 
-  unnest(results) %>% 
+results %>% 
+  unnest() %>% 
   select(state, ds, yhat, yhat_upper, yhat_lower) %>%
   mutate(ds = ds -2000) %>% 
   ggplot(aes(x = ds, y= yhat, color = state)) +

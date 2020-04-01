@@ -7,7 +7,7 @@ library(tidyverse)
 
     ## Warning: package 'tidyverse' was built under R version 3.5.3
 
-    ## -- Attaching packages ---------------------------------------- tidyverse 1.2.1 --
+    ## -- Attaching packages --------------------------------------- tidyverse 1.2.1 --
 
     ## v ggplot2 3.2.1     v purrr   0.3.3
     ## v tibble  2.1.3     v dplyr   0.8.3
@@ -28,7 +28,7 @@ library(tidyverse)
 
     ## Warning: package 'forcats' was built under R version 3.5.3
 
-    ## -- Conflicts ------------------------------------------- tidyverse_conflicts() --
+    ## -- Conflicts ------------------------------------------ tidyverse_conflicts() --
     ## x dplyr::filter() masks stats::filter()
     ## x dplyr::lag()    masks stats::lag()
 
@@ -434,14 +434,30 @@ model_results %>%
 ![](TidyTuesdayBeerProduction_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
 
 ``` r
-state_forcast <- beer_states %>% 
-  filter(type == "Bottles and Cans") %>% 
-  select(state, ds = year, y = barrels) %>% 
-  mutate(ds = paste(ds, "01", "01", sep = "-") %>% as.Date()) %>% 
-  group_by(state) %>% 
-  do(model = prophet(.),
-     future = make_future_dataframe(model, 2),
-     results = predict(model, future)) 
+state_data <- beer_states %>% 
+  filter(type == "Bottles and Cans") %>%
+  select(state, ds = year, y = barrels) %>%
+  mutate(ds = paste(ds, "01", "01", sep = "-") %>% as.Date()) 
+```
+
+``` r
+model_func <- function(state_name){
+  
+  data <- state_data %>% filter(state == state_name) %>% select(-state)
+  
+  model <- prophet(data)
+  
+  future <- make_future_dataframe(model, 2)
+  
+  results <- predict(model, future) %>% select(ds, yhat, yhat_upper, yhat_lower)
+  
+  return(results)
+}
+
+
+state_list <- state_data %>% select(state) %>% distinct() 
+results <- state_list %>% 
+  mutate(results = map(state, model_func))
 ```
 
     ## Disabling weekly seasonality. Run prophet with weekly.seasonality=TRUE to override this.
@@ -757,8 +773,8 @@ state_forcast <- beer_states %>%
     ## n.changepoints greater than number of observations. Using 8
 
 ``` r
-state_forcast %>% 
-  unnest(results) %>% 
+results %>% 
+  unnest() %>% 
   select(state, ds, yhat, yhat_upper, yhat_lower) %>%
   mutate(ds = ds -2000) %>% 
   ggplot(aes(x = ds, y= yhat, color = state)) +
@@ -770,11 +786,14 @@ state_forcast %>%
        subtitle = "Microlevel forecasting using Prophet")
 ```
 
+    ## Warning: `cols` is now required.
+    ## Please use `cols = c(results)`
+
     ## Some values in the specified facet_geo column 'state' do not match
     ##   the 'code' column of the specified grid and will be removed:
     ##   total
 
-![](TidyTuesdayBeerProduction_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
+![](TidyTuesdayBeerProduction_files/figure-gfm/unnamed-chunk-13-1.png)<!-- -->
 
 ``` r
 ggsave("forecast.pdf", plot = last_plot(), width = 32, height = 18, units = "in")
