@@ -199,13 +199,40 @@ attendance %>%
   arrange(home) %>% 
   unique() %>% 
   ungroup() %>% 
-  mutate(average = mean(rival_attendance)) %>% 
   ggplot(aes(x = home, y= away, fill = rival_attendance)) + 
   geom_tile() + 
   scale_x_discrete(position = "top") +
   theme(axis.text.x = element_text(angle = 45, hjust = -.1),
         legend.position = "top",
+        legend.key.width = unit(3, "cm")) +
+  scale_fill_continuous()
+```
+
+```{r, fig.height = 15, fig.width = 15}
+attendance %>% 
+  select(-team) %>% 
+  mutate(week = as.character(week)) %>% 
+  left_join(games %>% select(year, week, home_team_name, away_team_name), by = c("team_name" = "home_team_name", "year" = "year", "week" = "week")) %>% 
+  drop_na() %>% 
+  select(home = team_name, away = away_team_name, year, week, weekly_attendance) %>%
+  group_by(home) %>% 
+  mutate(average_attendance = mean(weekly_attendance),
+         sd= sd(weekly_attendance)) %>% 
+  group_by(home, away) %>% 
+  mutate(rival_attendance = mean(weekly_attendance)) %>% 
+  select(home, away, average_attendance, rival_attendance, sd) %>% 
+  mutate(standardized_attendance = (rival_attendance - average_attendance)/ sd) %>% 
+  select(home, away, standardized_attendance) %>% 
+  unique() %>% 
+  ungroup() %>% 
+  ggplot(aes(x = home, y= away, fill = standardized_attendance)) + 
+  geom_tile() + 
+  scale_x_discrete(position = "top") +
+  theme(axis.text.x = element_text(angle = 45, hjust = -.1),
+        legend.position = "top",
         legend.key.width = unit(3, "cm")) + 
-  scale_fill_gradient2(midpoint = 67574, high = "blue", low = "red")
+  scale_fill_gradient2() + 
+  ggtitle(label = "Team Head to Head")
+  
 ```
 
