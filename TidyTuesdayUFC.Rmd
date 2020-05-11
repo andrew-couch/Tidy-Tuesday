@@ -1,0 +1,236 @@
+---
+title: "TidyTuesdayUFCELO"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+df <- read.csv("data.csv")
+df %>% colnames()
+```
+
+```{r}
+#Separate red and blue corner and clean names 
+r_df <- df %>% 
+  select_at(vars(starts_with("R_"),contains("Winner"))) %>%
+  mutate(key = row_number()) %>% 
+  rename_all(.funs = function(x) { str_replace(x, "R_", "")}) 
+
+b_df <- df %>% 
+  select_at(vars(starts_with("B_"),contains("Winner"))) %>% 
+  mutate(key = row_number()) %>% 
+  rename_all(.funs = function(x) { str_replace(x, "B_", "")})
+
+shared_features <- df %>% select(date, location, title_bout, weight_class, no_of_rounds) %>% mutate(key = row_number())
+
+#Combines data to a tidy format for each fighter and the fight event stats 
+tidy_df <- rbind(
+  r_df %>% 
+    mutate(Winner = case_when(
+      Winner == "Red" ~ 1,
+      Winner == "Blue" ~ 0,
+      TRUE ~ .5)),
+  b_df %>% 
+    mutate(Winner = case_when(
+      Winner == "Blue" ~ 1,
+      Winner == "Red" ~ 0,
+      TRUE ~ .5)))  %>% 
+  left_join(shared_features, by = "key") %>% 
+  rename("match_id" = "key", 
+         "winner" = "Winner")
+```
+
+```{r}
+#Joins the tidy format together into a head to head match format 
+elo_df <- tidy_df %>% 
+  select(match_id, date, fighter, winner, weight_class) %>% 
+  left_join(tidy_df %>% 
+              select(match_id, fighter),
+            by = "match_id") %>% 
+  select(match_id, date, fighter = fighter.x, opponent = fighter.y, winner, weight_class) %>% 
+  filter(fighter != opponent) %>% #Applies filtering to remove duplicated fighters 
+  arrange(fighter, date) %>% 
+  group_by(match_id) %>% 
+  slice(1) %>% 
+  ungroup()
+```
+
+
+
+
+```{r}
+library(elo)
+library(broom)
+#Simulate ELO scores with a K of 20
+elo <- elo.run(winner~fighter + opponent, 
+                   k = 20,
+                   data = elo_df)
+
+#Finds the overall top 10 fighters overall 
+rank.teams(elo) %>% 
+  tidy() %>% 
+  rename("ranking" = "x") %>% 
+  arrange(ranking)
+```
+
+
+
+
+```{r}
+#Plot of elo scores, probabilities, and elo changes throughout the UFC 
+elo %>% 
+  as.data.frame() %>% 
+  cbind(list("match_id" = elo_df$match_id,
+             "date" = elo_df$date)) %>% 
+  select_at(vars(contains(".A"), contains("date"))) %>% 
+  rename_all(.funs = function(x){str_replace(x, ".A", "")}) %>% 
+  group_by(date) %>% 
+  summarise(avg_elo = mean(elo),
+            elo_change = mean(update),
+            avg_fighter_prob = mean(p)) %>% 
+  ungroup() %>% 
+  mutate(date = as.Date(date)) %>% 
+  pivot_longer(-date) %>% 
+  ggplot(aes(x = date, y = value, color = name, group = name)) + 
+  geom_line() + 
+  facet_wrap(~name, scales = "free") + 
+  scale_x_date(date_breaks = "3 years", date_labels = "%y") + 
+  theme(legend.position = "none")
+```
+
+
+
+```{r}
+#Need to see how K affects the top 10 overall fighters
+k_sensitivity <- function(k){
+  results <- elo.run(winner~fighter + opponent, 
+                   k = k,
+                   data = elo_df)
+  
+  rank.teams(results) %>% 
+    tidy() %>% 
+    rename("ranking" = "x") %>% 
+    arrange(ranking) %>% 
+    filter(ranking <= 10) 
+}
+
+
+#Applies function to a list of k's, essentially a grid search 
+k_rankings <- tibble(k = seq(from = 1, to = 101, by = 10)) %>%
+  mutate(ranking = map(k, k_sensitivity)) %>% 
+  unnest()
+#Plot the rankings for each k, K doesn't seem to affect the overall top 10 rankings (may need to see the time series data)
+k_rankings %>% 
+  group_by(names) %>% 
+  mutate(avg_ranking = mean(ranking)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = reorder(names, -ranking), y = k, fill = ranking)) + 
+  geom_tile() + 
+  coord_flip() + 
+  labs(fill = "Ranking") +
+  theme_minimal() + 
+  xlab("")
+```
+
+
+```{r}
+#Creates a helper function for finding the top 10 ranked fighters 
+elo_top <- function(data){
+  results <- elo.run(winner~fighter + opponent, 
+                   k = 20,
+                   data = data)
+rank.teams(results) %>% 
+  tidy() %>% 
+  rename("ranking" = "x") %>% 
+  filter(ranking <= 10)
+
+}
+
+#Finds the top 10 ranked fighters for each weight class
+top10_weight <- elo_df %>% 
+  group_by(weight_class) %>% 
+  nest() %>% 
+  mutate(ranking = map(data, elo_top)) %>% 
+  select(weight_class, ranking) %>% 
+  unnest() %>% 
+  arrange(ranking, weight_class)
+
+top10_weight 
+```
+
+
+```{r}
+#Creates a function for getting the total history of ELO to be appleid for each weight class 
+elo_history <- function(data){
+  results <- elo.run(winner~fighter + opponent, 
+                   k = 20,
+                   data = data)
+  
+  results %>% 
+    as.data.frame() %>% 
+    rename("fighter" = 1, "opponent" = 2, "fighter_prob" = 3, "fighter_wins" = 4, "fighter_elo_change" = 5, "opponent_elo_change" = 6, "fighter_elo" = 7, "opponent_elo" = 8)
+}
+
+
+#Finds the ELO history for each weight class 
+elo_changes <- elo_df %>% 
+  arrange(weight_class, match_id) %>% 
+  group_by(weight_class) %>% 
+  nest() %>% 
+  mutate(elo_history = map(data, elo_history)) %>% 
+  select(weight_class, elo_history) %>% 
+  unnest() %>% 
+  ungroup() %>% 
+  cbind(elo_df %>% 
+          arrange(weight_class, match_id) %>% 
+          select(match_id))
+
+elo_changes
+```
+
+
+```{r}
+#Separates the fighter and opponent and converts to a tidy format 
+elo_changes <- elo_changes %>% 
+  select(weight_class, fighter, fighter_prob, fighter_elo_change, fighter_elo, match_id) %>% 
+  rbind(elo_changes %>% 
+          select(weight_class, fighter = opponent, fighter_prob, fighter_elo_change = opponent_elo_change, fighter_elo = opponent_elo, match_id) %>% 
+          mutate(fighter_prob = 1-fighter_prob)) %>% 
+  mutate(fighter = as.character(fighter)) %>% 
+  left_join(tidy_df, by = c("fighter", "match_id")) %>% 
+  mutate(date = as.Date(date)) %>% 
+  select(-weight_class.y) %>% 
+  rename("weight_class" = "weight_class.x")
+
+
+elo_changes 
+```
+
+
+```{r}
+elo_changes %>% 
+  filter(fighter == "Henry Cejudo") %>% 
+  ggplot(aes(x = date, y = fighter_elo)) + 
+  geom_line() + 
+  geom_point()
+```
+
+```{r}
+predict(elo, data.frame(fighter = "Henry Cejudo", opponent = 'Dominick Cruz'))
+```
+
+```{r}
+elo_changes %>% 
+  group_by(match_id) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  top_n(abs(fighter_elo_change), n = 5) %>% 
+  arrange(desc(fighter_elo_change)) %>% 
+  select(match_id) %>% 
+  left_join(elo_df)
+```
+
