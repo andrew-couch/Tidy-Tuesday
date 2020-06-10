@@ -1,0 +1,270 @@
+---
+title: "TidyTuesdayARMAModels"
+author: "Andrew Couch"
+date: "6/9/2020"
+output: rmarkdown::github_document
+---
+
+```{r}
+library(tidyverse)
+library(modeldata)
+library(forecast)
+```
+
+```{r}
+data("Chicago")
+Chicago %>% 
+  glimpse()
+```
+
+```{r}
+library(lubridate)
+#Need to clean up and evaluate the timeseries components 
+Chicago %>% 
+  select(ridership, date) %>% 
+  ggplot(aes(x = date, y = ridership)) + 
+  geom_line()
+```
+
+```{r}
+Chicago <- Chicago %>% 
+  select(ridership, date) 
+
+
+Chicago %>% 
+  mutate(month_name = month.abb[month(date)],
+         month = month(date),
+         year = year(date)) %>% 
+  mutate(year = as.factor(year)) %>% 
+  ggplot(aes(x = month, y = ridership, color = year)) + geom_smooth(se = FALSE)
+```
+
+
+```{r, fig.height=15}
+Chicago %>% 
+  ts() %>% 
+  mstl() %>% 
+  autoplot()
+```
+
+```{r}
+
+Chicago %>% 
+  select(ridership) %>% 
+  ts() %>% 
+  ggtsdisplay()
+
+```
+
+
+
+```{r}
+#We suspect this data is non-stationary so we will try using differencing
+Chicago %>% 
+  mutate(ridership_daily_change = ridership - lag(ridership, 1)) %>% 
+  ggplot(aes(x = date, y = ridership_daily_change)) + geom_line()
+```
+
+
+```{r}
+Chicago <- Chicago %>% 
+  mutate(ridership_daily_change = ridership - lag(ridership, 1)) 
+
+
+Chicago %>% 
+  select(ridership_daily_change) %>% 
+  ts() %>% 
+  ggtsdisplay()
+```
+
+
+
+```{r}
+Chicago %>% 
+  select(ridership_daily_change) %>% 
+  ts() %>% 
+  mstl() %>% 
+  autoplot()
+```
+
+```{r}
+Chicago %>% 
+  select(ridership_daily_change) %>% 
+  ts() %>% 
+  auto.arima() %>% 
+  forecast(h = 20) %>% 
+  autoplot()
+```
+
+
+```{r}
+Chicago %>% 
+  select(ridership_daily_change) %>% 
+  ts() %>% 
+  ets() %>% 
+  forecast() %>% 
+  autoplot()
+```
+
+
+```{r}
+data("drinks")
+drinks <- drinks %>% 
+  rename("sales" = 2)
+
+drinks %>% 
+  select(sales) %>% 
+  ts() %>% 
+  ggtsdisplay()
+```
+
+```{r}
+drinks %>% 
+  select(sales) %>% 
+  ts() %>% 
+  mstl() %>% 
+  autoplot()
+```
+
+```{r}
+drinks %>% 
+  select(sales) %>% 
+  ts() %>% 
+  auto.arima() %>% 
+  forecast(h = 3) %>% 
+  autoplot()
+```
+
+
+
+```{r}
+drinks %>% 
+  mutate(log10sales = log10(sales)) %>% 
+  gather(key = "key", value = "value", -date) %>% 
+  ggplot(aes(x = date, y = value, color = key)) + 
+  geom_line() + 
+  facet_wrap(~key, scales = "free_y")
+```
+
+```{r}
+regular_arima <- drinks %>% 
+  select(sales) %>% 
+  ts() %>% 
+  auto.arima()
+```
+
+
+```{r}
+logged_arima <- drinks %>% 
+  select(sales) %>% 
+  mutate(sales = log10(sales)) %>% 
+  ts() %>% 
+  auto.arima()
+```
+
+```{r}
+regular_arima
+```
+
+
+```{r}
+logged_arima
+```
+
+
+
+```{r}
+library(broom)
+
+model_data <- drinks %>% 
+  mutate(time = row_number()) 
+```
+
+
+
+```{r}
+linear_forecast <- model_data %>% 
+  mutate(month = month.abb[month(date)]) %>% 
+  select(time, month, sales) %>% 
+  lm(sales ~ time + month, data = .) 
+```
+```{r}
+#Looking at the residuals 
+augment(linear_forecast) %>% 
+  ggplot(aes(x = time, y = .std.resid)) + geom_point()
+```
+
+
+```{r}
+
+model_data_with_resid <-  model_data %>% 
+  mutate(month = month.abb[month(date)]) %>% 
+  select(time, month, sales) %>% 
+  left_join(augment(linear_forecast) %>% 
+  select(time, "residuals" = .std.resid),
+  by = c("time" = "time")) %>% 
+  mutate(lagged_residuals = lag(residuals, 1)) %>% 
+  drop_na()
+
+
+linear_forecast_with_resid <- lm(sales ~ time + month + lagged_residuals, data = model_data_with_resid)
+```
+
+```{r}
+#Charts show a small dif between models
+linear_forecast_with_resid %>% glance() %>% 
+  mutate(model  = "resid") %>% 
+  rbind(linear_forecast %>% glance() %>% 
+  mutate(model  = "no resid")) %>% 
+  gather(key = "key", value = "value", -model) %>% 
+  ggplot(aes(x = model, y = value, fill = model)) + geom_col() + facet_wrap(~key, scales = "free")
+
+
+
+```
+
+
+
+```{r}
+linear_forecast_with_resid %>% glance() %>% 
+  mutate(model  = "resid") %>% 
+  rbind(linear_forecast %>% glance() %>% 
+  mutate(model  = "no resid")) 
+```
+
+```{r}
+#Lets add a tranformation 
+log_linear_forecast_with_resid <- lm(log(sales, 10) ~ time + month + lagged_residuals, data = model_data_with_resid)
+
+```
+
+
+```{r}
+
+log_linear_forecast_with_resid %>% 
+  augment() %>% 
+  rename("sales" = 1) %>% 
+  mutate(sales = 10^sales,
+         .fitted = 10^.fitted) %>% 
+  mutate(error = abs(sales- .fitted)) %>% 
+  summarise(mae = mean(error))
+
+
+```
+
+
+
+```{r}
+linear_forecast_with_resid %>% augment() %>% 
+  mutate(error = abs(sales - .fitted)) %>% 
+  summarise(mae = mean(error))
+
+```
+
+
+
+
+
+
+
+
