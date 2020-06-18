@@ -181,8 +181,8 @@ int_wf <- int_wf %>% finalize_workflow(int_tune)
 
 ```{r}
 #Get test metrics
-main_wf %>% last_fit(main_split) %>% collect_metrics()
-int_wf %>% last_fit(main_split) %>% collect_metrics()
+main_wf %>% last_fit(tidy_split) %>% collect_metrics()
+int_wf %>% last_fit(tidy_split) %>% collect_metrics()
 ```
 
 ```{r}
