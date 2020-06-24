@@ -1,0 +1,219 @@
+---
+title: "TidyTuesdayInteractionEffects"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidymodels)
+library(tidyverse)
+library(AmesHousing)
+options(scipen = 999)
+ames_data <- make_ames()
+ames_data %>% glimpse()
+ames_data %>% 
+  select(Sale_Price) %>% 
+  ggplot(aes(Sale_Price)) + geom_histogram()
+```
+
+```{r}
+ames_data %>% 
+  select(Sale_Price, Year_Built, Central_Air) %>% 
+  ggplot(aes(x = Year_Built, y = Sale_Price, color = Central_Air)) + 
+  geom_point(alpha = .1) + 
+  geom_smooth(method = "lm")
+```
+
+
+```{r}
+ames_data %>% 
+  select(Sale_Price, Year_Built) %>% 
+  ggplot(aes(x = Year_Built, y = Sale_Price)) + 
+  geom_line()
+```
+
+```{r}
+ames_data %>% 
+  select(Sale_Price, Central_Air) %>% 
+  ggplot(aes(x = Central_Air, y = Sale_Price)) + geom_boxplot()
+```
+
+
+```{r}
+library(broom)
+
+#This seems like a lot of work and might not pan out
+lm(Sale_Price~., data = ames_data) %>% tidy() %>% filter(p.value <= .05)
+
+```
+
+```{r}
+#Can't just generate all pairwise combinations when there is a lot of features 
+lm(Sepal.Length~.^2, data = iris) %>% tidy() %>% summarise(adjusted_pvalue = p.adjust(p.value, method = "fdr"))
+
+
+```
+
+
+```{r}
+#Select the numerical features first and create a model
+#Generate a model with only numerical features
+numerical_features <- ames_data %>% 
+  select(Sale_Price, where(is.numeric)) %>% 
+  lm(Sale_Price~., data = .) %>% 
+  tidy() %>% 
+  filter(p.value <= .05) %>% 
+  select(term)
+
+#Generate a model with only categorical features
+categorical_features <- ames_data %>% 
+  select(Sale_Price, where(is.factor)) %>% 
+  rename_if(is.factor, .funs = ~paste(., "/", sep = "")) %>% 
+  lm(Sale_Price~., data = .) %>% 
+  tidy() %>% 
+  filter(p.value <= .05) %>% 
+  select(term) %>% 
+  mutate(new_term = str_replace_all(term, "\\/.*", "")) %>% 
+  mutate(new_term = str_replace(new_term, "`", "")) %>% 
+  select(new_term)
+```
+
+```{r}
+#Created data for modeling
+main_effects_data <- ames_data %>% 
+  select(Sale_Price, any_of(numerical_features$term), any_of(categorical_features$new_term))
+
+#Renamed columns for each feature/data type
+main_effects_data <- main_effects_data %>% 
+  rename_if(is.factor, .funs = ~paste(., "_Dummy", sep = "")) %>% 
+  rename_if(is.numeric, .funs = ~paste(., "_Numeric", sep = "")) %>% 
+  rename("Sale_Price" = 1)
+```
+
+```{r}
+set.seed(2020)
+#Create train and test splits 
+tidy_split <- initial_split(main_effects_data, prop = .8)
+tidy_train <- training(tidy_split)
+tidy_test <- testing(tidy_split)
+
+#Create k-folds 
+tidy_kfolds <- vfold_cv(tidy_train)
+```
+
+
+
+```{r}
+#Create basic recipe for a main effects model/baseline
+main_effects_recipe <- recipe(Sale_Price~., 
+                              data = tidy_train) %>% 
+  step_dummy(all_nominal()) %>% 
+  step_center(all_predictors())
+
+#Create the interactions 
+interaction_effects_recipe <- recipe(Sale_Price~., 
+       data = tidy_train) %>% 
+  step_dummy(all_nominal()) %>% 
+  step_interact(~contains("Dummy"):contains("Numeric")) %>% 
+  step_center(all_predictors())
+
+#That's a lot of features, we will need to do some feature elimination
+interaction_effects_recipe %>% prep() %>% bake(tidy_train %>% head()) %>% colnames() %>% length()
+```
+
+```{r}
+#Create a lasso model
+lasso_model <- linear_reg(penalty = tune(), mixture = 1) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+#Define model parameters
+lasso_info <- parameters(lasso_model)
+
+#Create the workflows
+
+#Main effects model workflow
+main_wf <- workflow() %>% 
+  add_recipe(main_effects_recipe) %>% 
+  add_model(lasso_model)
+
+#Interaction Effects model workflow
+int_wf <- workflow() %>% 
+  add_recipe(interaction_effects_recipe) %>% 
+  add_model(lasso_model)
+```
+
+
+```{r}
+#Create the tune grid for the models 
+lasso_grid <- grid_regular(lasso_info, levels = 15)
+
+#Tune models using grid search
+
+main_res <- tune_grid(
+  main_wf,
+  resamples = tidy_kfolds,
+  grid = lasso_grid
+)
+
+
+int_res <- tune_grid(
+  int_wf,
+  resamples = tidy_kfolds,
+  grid = lasso_grid
+)
+
+```
+
+
+```{r}
+#Extract model parameter
+main_tune <- main_res %>% select_best("rmse")
+int_tune <- int_res %>% select_best("rmse")
+
+#Finalize the workflow for modeling
+main_wf <- main_wf %>% finalize_workflow(main_tune)
+int_wf <- int_wf %>% finalize_workflow(int_tune)
+```
+
+```{r}
+#Get test metrics
+main_wf %>% last_fit(tidy_split) %>% collect_metrics()
+int_wf %>% last_fit(tidy_split) %>% collect_metrics()
+```
+
+```{r}
+#Create our final models
+main_effects_model <- fit(main_wf, main_effects_data)
+interaction_effects_model <- fit(int_wf, main_effects_data)
+```
+
+```{r}
+post_main_model <- main_effects_model %>% pull_workflow_fit()
+post_main_model %>% pluck("fit") %>% coef(s = main_tune$penalty) %>% tidy()
+```
+
+```{r}
+post_int_model <- pull_workflow_fit(interaction_effects_model)
+post_int_model %>% pluck("fit") %>% coef(s = int_tune$penalty) %>% tidy()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,154 @@
+---
+title: "TidyTuesday Caret and Tidymodels"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(caret)
+
+df <- read_csv("abalone.data", col_names = FALSE)
+colnames(df) <- c("Sex", "Length", "Diameter", "Height", "Whole_Weight","Shucked_Weight", "Viscera_Weight", "Shell_Weight", "Rings")
+df$Sex <- as.factor(df$Sex)
+
+set.seed(80)
+df <- sample_n(df, size = 800)
+df %>% summary()
+```
+
+```{r}
+#Splitting train and test sets with caret
+caret_split <- createDataPartition(df$Rings, p = .8, list = FALSE)
+caret_train <- df[caret_split,]
+caret_test <- df[-caret_split,]
+
+#Splitting train and test sets the tidy way
+tidy_split <- initial_split(df, prop = .8)
+tidy_train <- training(tidy_split)
+tidy_test <- testing(tidy_split)
+```
+
+
+```{r}
+#Preprocessing center, scale, and one-hot-encode
+caret_preprocess <- preProcess(caret_train %>% select(-Rings), method = c("center", "scale"))
+caret_train <- predict(caret_preprocess, caret_train)
+caret_test <- predict(caret_preprocess, caret_test)
+#Apply one-hot-encoding using caret
+caret_one_hot <- dummyVars(~., data = caret_train)
+caret_train <- predict(caret_one_hot, caret_train)
+caret_test <- predict(caret_one_hot, caret_test)
+
+
+#Tidy way of preprocessing
+tidy_rec <- recipe(Rings~., data = tidy_train) %>% 
+  step_center(all_predictors(), -all_nominal()) %>% 
+  step_scale(all_predictors(), -all_nominal()) %>% 
+  step_dummy(all_nominal(), one_hot = TRUE)
+tidy_prep <- prep(tidy_rec)
+
+tidy_juice <- juice(tidy_prep)
+```
+
+
+```{r}
+#set sampling procedures using k-folds
+caret_kfolds <- trainControl(method = "repeatedcv", repeats = 10, number = 10)
+tidy_kfolds <- vfold_cv(tidy_train, v = 10, strata = "Rings")
+```
+
+
+```{r}
+#Tuning models
+#Create random forest model in caret
+caret_rf <- train(Rings~.,
+                  data = caret_train,
+                  method = "rf",
+                  trControl = caret_kfolds,
+                  tuneLength = 3)
+
+##Tidy way 
+#Specify model
+tidy_rf <- rand_forest(
+  mtry = tune(),
+  trees = 1000,
+  min_n = tune()
+  ) %>% 
+  set_mode("regression") %>% 
+  set_engine("randomForest")
+
+#Specify modeling procdeure
+tidy_wf <- workflow() %>% 
+  add_recipe(tidy_rec) %>% 
+  add_model(tidy_rf)
+
+#Tune the model
+tidy_tune <- tune_grid(
+  tidy_wf,
+  resamples = tidy_kfolds,
+  grid = 5
+)
+
+```
+
+
+```{r}
+#Evaluate the models 
+#Evaluate caret model
+caret_rf %>% plot()
+caret_rf
+
+#Evaulate the tidy model
+tidy_best_tune <- tidy_tune %>% select_best("rmse")
+```
+
+```{r}
+#Finalize our models
+caret_rf
+
+tidy_final_model <- finalize_model(tidy_rf, tidy_best_tune)
+tidy_final_workflow <- workflow() %>% 
+  add_recipe(tidy_rec) %>% 
+  add_model(tidy_final_model)
+
+tidy_final_workflow
+```
+
+
+
+```{r}
+#Evaluate the test sets using the final models
+#Caret way
+caret_final_results <- predict(caret_rf, caret_test) %>% as_tibble() %>% select(pred = 1) %>% cbind(caret_test %>% as_tibble() %>% select(obs = Rings))
+RMSE(pred = caret_final_results$pred, obs = caret_final_results$obs)
+
+
+#Tidy way 
+tidy_final_workflow %>% last_fit(tidy_split) %>% collect_metrics()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

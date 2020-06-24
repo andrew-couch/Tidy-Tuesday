@@ -1,0 +1,232 @@
+---
+title: "TidyTuesdayBeerProduction"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+brewing_materials <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-31/brewing_materials.csv')
+beer_taxed <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-31/beer_taxed.csv')
+brewer_size <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-31/brewer_size.csv')
+beer_states <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-31/beer_states.csv')
+```
+
+```{r, fig.width=20, fig.height=10}
+options(scipen = 999)
+library(geofacet)
+
+beer_states %>% 
+  filter(!state == "total") %>% 
+  mutate(barrels = 31*barrels/100000) %>% 
+  ggplot(aes(x = year, y = barrels, color = type)) +
+  geom_line() + 
+  facet_geo(~ state, grid = "us_state_grid2", label = "name", scales = "free_y") +
+  theme(legend.position = "top",
+        axis.text.x = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) + 
+  labs(title = "State Beer Production",
+       subtitle = "100,000 of Gallons Produced") +
+  xlab("") + 
+  ylab("")
+```
+
+
+
+```{r}
+us_ia_counties_grid1
+```
+
+
+
+```{r, fig.width = 15, fig.height = 10}
+model_data <- brewing_materials %>% 
+  select(year, month, type, month_current) %>% 
+  mutate(month = if_else(month < 10, paste(0, month, sep = ""), month %>% as.character()),
+         year = as.character(year),
+         ds = paste(year, month, "01", sep = "-") %>% as.Date()) %>% 
+  select(type, ds, month_current)
+  
+
+key <- model_data %>% 
+  select(type) %>% 
+  distinct() %>% 
+  mutate(name = c("Malt", "Corn", "Rice", "Barley", "Wheat", "Total_Grain", "Sugar", "Hops_Dry", "Hops_Extract", "Other", "Total_Non_Grain", "Total_Used"))
+
+key
+
+model_data %>% 
+  ggplot(aes(x = ds, y = month_current, color = type)) + 
+  geom_smooth() + 
+  geom_point() + 
+  facet_wrap(~type, scales = "free") + 
+  theme(legend.position = "none")
+```
+
+
+
+
+```{r}
+library(prophet)
+
+
+model_results <- data.frame()
+
+#Old way of doing micro level models 
+for (i in 1:12){
+  
+  model <- model_data %>% 
+    filter(type ==  key$type[i]) %>% 
+    select(ds, y = month_current) %>% 
+    prophet()
+  
+  assign(paste(key$name[i], "model", sep = "_"), model)
+
+future <- make_future_dataframe(model, periods = 3)  
+
+results <- predict(model, future) %>% 
+  select(ds, yhat_lower, yhat_upper, yhat) %>% 
+  mutate(type = key$type[i],
+         ds = as.Date(ds)) %>% 
+  inner_join(model_data, by = c("type" = "type", "ds" = "ds"))
+
+model_results <- rbind(model_results, results) 
+}
+```
+
+
+```{r, fig.height = 10, fig.width=15}
+model_results %>% 
+  ggplot(aes(x = ds, y = month_current, color = type)) + 
+  geom_line(color = "black")  + 
+  geom_line(aes(x = ds, y = yhat, color = type)) +
+  geom_ribbon(aes(ymin = yhat_lower, ymax = yhat_upper, fill = type), alpha = .1) + 
+  facet_wrap(~type, scales = "free") + 
+  theme(legend.position = "none") + 
+  labs(title = "Forecasting with Prophet",
+       subtitle = "Forecasting Material Usage for Beer Companies")
+```
+
+
+
+```{r, fig.width = 15, fig.height= 15}
+model_results %>% 
+  ggplot(aes(x = yhat, y = month_current, color = type)) + 
+  geom_point() + 
+  geom_abline(slope = 1) + 
+  facet_wrap(~type, scales = "free") + 
+  theme(legend.position = "none") 
+```
+
+```{r, fig.width=15, fig.height=15}
+
+model_results %>% 
+  ggplot(aes(x = ds, month_current, color = type)) + 
+  geom_point() + 
+  geom_line(aes(y = yhat, color = "prophet")) + 
+  facet_wrap(~type, scales = "free") + 
+  theme(legend.position = "none")
+
+
+```
+
+
+
+
+
+```{r, fig.width = 15, fig.height=10}
+model_results %>% 
+  select(ds, pred = yhat, actual = month_current, type) %>% 
+  mutate(residual = actual - pred,
+         res_type = if_else(residual > 0, "Over", "Under")) %>% 
+  mutate(yr = lubridate::year(ds)) %>% 
+  group_by(yr, type) %>% 
+  summarise(actual_annual_avg = mean(actual),
+            predicted_annual_avg = mean(pred)) %>% 
+  ungroup() %>% 
+  mutate(difference = actual_annual_avg - predicted_annual_avg) %>% 
+  ggplot(aes(x = yr)) + 
+  geom_line(aes(y = actual_annual_avg, color = "Actual"), size = 1) + 
+  geom_line(aes(y = predicted_annual_avg, color = "Prophet"), size = 1) + 
+  facet_wrap(~type, scales = "free")
+```
+
+
+```{r, fig.width = 15, fig.height = 15}
+model_results %>% 
+  select(type, ds, pred = yhat, actual = month_current) %>% 
+  mutate(residual = pred - actual) %>%
+  ggplot(aes(x = residual, fill = residual > 0)) + 
+  geom_density(color = "white", alpha = .5) + 
+  facet_wrap(~type, scales = "free") + 
+  theme(legend.position = "none")
+```
+
+
+
+```{r}
+state_data <- beer_states %>% 
+  filter(type == "Bottles and Cans") %>%
+  select(state, ds = year, y = barrels) %>%
+  mutate(ds = paste(ds, "01", "01", sep = "-") %>% as.Date()) 
+```
+
+
+```{r}
+
+model_func <- function(state_name){
+  
+  data <- state_data %>% filter(state == state_name) %>% select(-state)
+  
+  model <- prophet(data)
+  
+  future <- make_future_dataframe(model, 2)
+  
+  results <- predict(model, future) %>% select(ds, yhat, yhat_upper, yhat_lower)
+  
+  return(results)
+}
+
+
+state_list <- state_data %>% select(state) %>% distinct() 
+results <- state_list %>% 
+  mutate(results = map(state, model_func))
+
+```
+
+
+```{r, fig.height = 15, fig.width = 15}
+results %>% 
+  unnest() %>% 
+  select(state, ds, yhat, yhat_upper, yhat_lower) %>%
+  mutate(ds = ds -2000) %>% 
+  ggplot(aes(x = ds, y= yhat, color = state)) +
+  geom_ribbon(aes(ymax = yhat_upper, ymin = yhat_lower, fill = state), alpha = .1)  +
+  geom_line(color = "black") + 
+  facet_geo(~state, grid = "us_state_grid2", scales = "free") + 
+  theme(legend.position = "none") + 
+  labs(title = "Forcasted Bottles and Cans Production",
+       subtitle = "Microlevel forecasting using Prophet")
+
+
+ggsave("forecast.pdf", plot = last_plot(), width = 32, height = 18, units = "in")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
