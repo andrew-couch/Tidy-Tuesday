@@ -2,20 +2,9 @@ library(shiny)
 library(shinydashboard)
 library(tidymodels)
 library(tidyverse)
-library(palmerpenguins)
+
 model <- readRDS("penguin_model.rds")
 
-penguins %>% select(species) %>% distinct()
-
-predict(
-    model,
-    tibble("island" = "Biscoe",
-           "bill_length_mm" = 12,
-           "bill_depth_mm" = 23,
-           "flipper_length_mm" = 23,
-           "body_mass_g" = 23,
-           "sex" = "Male")
-)
 
 ui <- dashboardPage(
     dashboardHeader(title = "Penguin App"),
