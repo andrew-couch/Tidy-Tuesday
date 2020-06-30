@@ -1,0 +1,152 @@
+---
+title: "TidyTuesdayManyModels"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(broom)
+library(gapminder)
+
+gapminder
+```
+
+
+```{r}
+gapminder %>% 
+  count(continent)
+
+gapminder %>% 
+  count(country)
+```
+
+```{r}
+baseline_model <- lm(lifeExp~., data = gapminder)
+
+baseline_model %>% augment() %>% 
+  ggplot(aes(x = year, y = .resid)) + geom_point()
+
+```
+
+
+
+```{r}
+gapminder %>% 
+  group_by(continent) %>% 
+  nest() %>% 
+  mutate(model = map(data, function(x){
+    lm(lifeExp~., data = x)
+  }))
+
+create_baseline_model <- function(x){
+  lm(lifeExp~., data = x)
+}
+
+#Basic many linear models for each continent 
+gapminder %>% 
+  group_by(continent) %>% 
+  nest() %>% 
+  mutate(model = map(data, create_baseline_model)) %>% 
+  mutate(results = map(model, augment)) %>% 
+  select(continent, results) %>% 
+  unnest() %>% 
+  ungroup() %>% 
+  select(continent, year, .resid) %>% 
+  ggplot(aes(x = year, y = .resid, color = continent)) + 
+  geom_point(alpha = .1) + 
+  geom_smooth() + 
+  facet_wrap(~continent, scales = "fixed")
+
+```
+
+
+```{r}
+#Create mars model function
+create_mars_model <- function(x){
+  mars_rec <- recipe(lifeExp~., data = x) %>% 
+  step_normalize(all_numeric(),-all_outcomes()) %>% 
+  step_dummy(all_nominal()) 
+
+mars_kfolds <- vfold_cv(x)
+
+mars_model <- mars(num_terms = tune(), prod_degree = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("earth")
+
+mars_grid <- grid_regular(parameters(mars_model), levels = 10)
+
+mars_wf <- workflow() %>% 
+  add_model(mars_model) %>% 
+  add_recipe(mars_rec)
+
+mars_res <- mars_wf %>% 
+  tune_grid(
+    resamples = mars_kfolds,
+    grid = mars_grid,
+    metrics = metric_set(mae)
+  )
+
+mars_tune <- mars_res %>% select_best("mae")
+
+mars_wf <- mars_wf %>% finalize_workflow(mars_tune)
+
+final_model <- fit(mars_wf, x)
+
+cat("Model Completed \n")
+
+return(final_model)
+}
+
+
+
+```
+
+
+
+```{r}
+#train nested mars models
+mars_models <- gapminder %>% 
+  group_by(continent) %>% 
+  nest() %>% 
+  mutate(model = map(data, create_mars_model))
+
+```
+
+
+```{r}
+mars_models %>% 
+  mutate(results = map2(model, data, predict)) %>% 
+  select(continent, data, results) %>% 
+  unnest() %>% 
+  ungroup() %>% 
+  mutate(resid = lifeExp - .pred) %>% 
+  ggplot(aes(x = year, y = resid, color = continent)) + 
+  geom_point(alpha = .1) + 
+  geom_smooth() + 
+  facet_wrap(~continent, scales = "fixed")
+```
+
+```{r}
+gapminder %>% 
+  group_by(continent) %>% 
+  nest() %>% 
+  mutate(model = map(data, create_baseline_model)) %>% 
+  mutate(results = map(model, augment)) %>% 
+  select(continent, results) %>% 
+  unnest() %>% 
+  ungroup() %>% 
+  select(continent, year, .resid) %>% 
+  ggplot(aes(x = year, y = .resid, color = continent)) + 
+  geom_point(alpha = .1) + 
+  geom_smooth() + 
+  facet_wrap(~continent, scales = "fixed")
+```
+
+
+
+
