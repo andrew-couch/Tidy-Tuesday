@@ -1,0 +1,185 @@
+---
+title: "TidyTuesdayPenguinModel"
+author: "Andrew Couch"
+date: "6/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#remotes::install_github("allisonhorst/palmerpenguins")
+library(tidyverse)
+library(tidymodels)
+library(palmerpenguins)
+
+palmerpenguins::penguins
+
+```
+
+```{r}
+#Species has some imbalances 
+penguins %>% 
+  count(species)
+```
+
+
+```{r}
+#Check how many NA's for each row
+rows_to_remove <- penguins %>% 
+  mutate(row_num = row_number()) %>% 
+  gather(key = "key", value = "value", -row_num) %>% 
+  filter(value %>% is.na()) %>% 
+  count(row_num, sort = TRUE) %>% 
+  slice(1:2) %>% 
+  select(row_num)
+
+
+#Remove rows that have too many na's
+penguins <- penguins %>% 
+  mutate(row_num = row_number()) %>% 
+  anti_join(rows_to_remove, by = "row_num") %>% 
+  select(-row_num)
+
+```
+
+```{r}
+#Check column nas
+penguins %>% summary()
+```
+
+```{r}
+#Male and female have different sizes in features, can probably impute missing with Knn 
+penguins %>% 
+  gather(key = "key", value = "value", -sex, -species, -island) %>% 
+  ggplot(aes(x = species, y = value, color = sex)) + 
+  geom_boxplot() + 
+  facet_wrap(~key, scales = "free")
+```
+
+```{r}
+#Examine distributions
+## Probably need to center and scale 
+penguins %>% 
+  select(bill_length_mm:body_mass_g) %>% 
+  gather() %>% 
+  ggplot(aes(x = value, color = key)) + 
+  geom_density() + 
+  facet_wrap(~key, scales = "free")
+```
+
+
+```{r}
+#Rsample pacakge example 
+## Create the train and test sets using Rsample
+set.seed(42)
+
+tidy_split <- initial_split(penguins, prop = .8)
+tidy_train <- training(tidy_split)
+tidy_test <- testing(tidy_split)
+
+tidy_kfolds <- vfold_cv(tidy_train)
+```
+
+
+```{r}
+#Recipes package 
+## For preprocessing, feature engineering, and feature elimination 
+tidy_rec <- recipe(species~., data = tidy_train) %>% 
+  step_knnimpute("sex") %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+  step_medianimpute(all_predictors()) %>% 
+  step_normalize(all_predictors())
+
+
+```
+
+
+
+```{r}
+# Parsnip package 
+## Standardized api for creating models 
+
+tidy_boosted_model <- boost_tree(trees = tune(),
+                                min_n = tune(),
+                                learn_rate = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost")
+
+tidy_knn_model <- nearest_neighbor(neighbors = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("kknn")
+
+```
+
+
+```{r}
+# Dials creates the parameter grids 
+# Tune applies the parameter grid to the models 
+
+# Dials pacakge 
+boosted_grid <- grid_regular(parameters(tidy_boosted_model), levels = 5)
+knn_grid <- grid_regular(parameters(tidy_knn_model), levels = 10)
+
+# Tune pacakge 
+boosted_tune <- tune_grid(tidy_boosted_model,
+          tidy_rec,
+          resamples = tidy_kfolds,
+          grid = boosted_grid)
+
+knn_tune <- tune_grid(tidy_knn_model,
+                      tidy_rec,
+                      resamples = tidy_kfolds,
+                      grid = knn_grid)
+
+#Use Tune package to extract best parameters using ROC_AUC handtill
+boosted_param <- boosted_tune %>% select_best("roc_auc")
+knn_param <- knn_tune %>% select_best("roc_auc")
+
+#Apply parameters to the models
+tidy_boosted_model <- finalize_model(tidy_boosted_model, boosted_param)
+tidy_knn_model <- finalize_model(tidy_knn_model, knn_param)
+```
+
+
+
+```{r}
+# Workflow package 
+# For combining model, parameters, and preprocessing
+boosted_wf <- workflow() %>% 
+  add_model(tidy_boosted_model) %>% 
+  add_recipe(tidy_rec)
+
+knn_wf <- workflow() %>% 
+  add_model(tidy_knn_model) %>% 
+  add_recipe(tidy_rec)
+```
+
+
+```{r}
+# Yardstick package
+# For extracting metrics from the model 
+
+boosted_res <- last_fit(boosted_wf, tidy_split)
+knn_res <- last_fit(knn_wf, tidy_split)
+
+bind_rows(
+  boosted_res %>% mutate(model = "xgb"),
+  knn_res %>% mutate(model = "knn")
+) %>% 
+  unnest(.metrics)
+
+boosted_res %>% unnest(.predictions) %>% 
+  conf_mat(truth = species, estimate = .pred_class)
+
+```
+
+```{r}
+# Fit the entire data set using the final wf 
+final_boosted_model <- fit(boosted_wf, penguins)
+saveRDS(final_boosted_model, "penguin_model.rds")
+```
+
+
