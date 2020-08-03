@@ -1,0 +1,105 @@
+---
+title: "TidyTuesday538"
+author: "Andrew Couch"
+date: "8/3/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(rvest)
+
+
+fivethirtyeight_slack_pages <- tibble(page_num = 1:25)
+#Create the pages of articles to scrape 
+fivethirtyeight_slack_pages <- fivethirtyeight_slack_pages %>% 
+  mutate(page = paste0("https://fivethirtyeight.com/tag/slack-chat/page/", page_num, "/"))
+
+```
+
+```{r}
+fivethirtyeight_slack_pages
+
+#Create a function to grab the links
+get_links <- function(page){
+  page <- "https://fivethirtyeight.com/tag/slack-chat/page/1/"
+  page <- read_html(page)
+
+  page %>% 
+    html_nodes("#main .entry-title a") %>%
+    html_attr("href") %>% 
+    as_tibble() %>% 
+    rename("links" = "value")
+}
+
+#Scrape the links
+fivethirtyeight_slack_pages <- fivethirtyeight_slack_pages %>% 
+  mutate(links = map(page, get_links))
+
+```
+
+```{r}
+library(progress)
+
+fivethirtyeight_slack_pages <- fivethirtyeight_slack_pages %>% 
+  unnest(links)
+
+
+pb <- progress_bar$new(total = nrow(fivethirtyeight_slack_pages),
+                       format = "executing [:bar] :percent eta::eta")
+
+#Create a function to extract text
+get_text <- function(link){
+  
+  pb$tick()
+  Sys.sleep(1/100)
+  
+  link <- "https://fivethirtyeight.com/features/trump-cant-postpone-the-election-but-he-can-delegitimize-the-results/"
+
+  link <- read_html(link)
+
+
+
+  link %>% 
+    html_nodes(".single-post-content p") %>% 
+    html_text() %>% 
+    as_tibble() %>% 
+    separate(value, c("staff_member", "text"), sep = ":", extra = "merge")
+
+}
+
+```
+
+
+```{r}
+#Scrape the actual text
+
+#Progress bar is shown in console
+fivethirtyeight_slack_pages <- fivethirtyeight_slack_pages %>% 
+  mutate(results = map(links, get_text))
+
+fivethirtyeight_slack_pages %>% 
+  unnest(results) %>% 
+  select(staff_member, text, everything(), -page_num) %>% 
+  head()
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
