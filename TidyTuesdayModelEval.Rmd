@@ -1,0 +1,193 @@
+---
+title: "TidyTuesdayModelEval"
+author: "Andrew Couch"
+date: "8/18/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+
+df <- read_csv("customer_churn.csv")
+```
+
+```{r}
+# Look at summary of the data set 
+df %>% summary()
+
+# Remove the 9 missing values 
+df <- df %>% drop_na()
+```
+
+
+
+
+```{r}
+# Convert features to relevant data types 
+df <- df %>% 
+  mutate_all(as.factor) %>% 
+  mutate(tenure = as.numeric(tenure),
+         MonthlyCharges = as.numeric(MonthlyCharges),
+         TotalCharges = as.numeric(TotalCharges)) 
+```
+
+```{r}
+df
+```
+
+```{r}
+# Create Train and test sets
+set.seed(42)
+
+tidy_split <- initial_split(df, prop = .8, strata = Churn)
+train_data <- training(tidy_split)
+test_data <- testing(tidy_split)
+
+tidy_k_folds <- vfold_cv(train_data)
+
+```
+
+
+
+```{r}
+# Pre-processing data 
+tidy_rec <- recipe(Churn~., data = train_data) %>% 
+  step_rm(customerID) %>% 
+  step_normalize(all_numeric()) %>% 
+  step_dummy(all_nominal(), -all_outcomes())
+
+tidy_rec %>% prep()
+
+```
+
+
+```{r}
+# Create models 
+
+baseline_model <- logistic_reg() %>% 
+  set_mode("classification") %>% 
+  set_engine("glm")
+
+randomForest_model <- rand_forest() %>% 
+  set_mode("classification") %>% 
+  set_engine("randomForest")
+
+XGBoost_model <- boost_tree() %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost")
+
+```
+
+
+
+```{r}
+# Fit resamples
+
+logistic_res <- fit_resamples(baseline_model, tidy_rec, tidy_k_folds)
+randomForest_res <- fit_resamples(randomForest_model, tidy_rec, tidy_k_folds)
+XGBoost_res <- fit_resamples(XGBoost_model, tidy_rec, tidy_k_folds)
+
+
+```
+
+
+```{r}
+# Create a tibble of model results 
+model_res <- tibble(model = list(logistic_res, randomForest_res, XGBoost_res),
+       model_name = c("logistic", "randomForest", "XGBoost"))
+
+# Create a helper function for collecting the metrics 
+map_collect_metrics <- function(model){
+  
+  model %>% 
+    select(id, .metrics) %>% 
+    unnest()
+}
+
+# Apply helper function and extract the metrics 
+model_res <- model_res %>% 
+  mutate(res = map(model, map_collect_metrics)) %>% 
+  select(model_name, res) %>% 
+  unnest(res)
+```
+
+```{r}
+model_res %>% 
+  ggplot(aes(x = model_name, y = .estimate)) + 
+  geom_boxplot() + 
+  facet_wrap(~.metric, scales = "free_y")
+```
+
+```{r}
+model_res %>% 
+  ggplot(aes(x = model_name, y = .estimate, color = id, group = id)) + 
+  geom_line() + 
+  facet_wrap(~.metric, scales = "free_y")
+```
+
+```{r}
+model_res %>% 
+  ggplot(aes(x = .estimate, color = model_name, fill = model_name)) + 
+  geom_density(alpha = .1) + 
+  facet_wrap(~.metric, scales = "free_y")
+```
+
+```{r}
+df %>% count(Churn)
+```
+
+```{r}
+model_res %>% 
+  group_by(model_name, .metric) %>% 
+  summarise(mean = mean(.estimate))
+```
+```{r}
+model_pos <- model_res %>% 
+  filter(.metric == "roc_auc") %>% 
+  select(model_name, id, .estimate) %>% 
+  pivot_wider(names_from = "model_name", values_from = ".estimate")
+```
+
+```{r}
+library(tidyposterior)
+roc_auc_model <- perf_mod(model_pos, seed = 42)
+```
+
+```{r}
+roc_auc_model %>% tidy()
+```
+```{r}
+roc_auc_model %>% 
+  tidy() %>% 
+  ggplot(aes(x = model, y = statistic)) + 
+  geom_point()
+```
+
+
+```{r}
+contrast_models(roc_auc_model)
+```
+```{r}
+contrast_models(roc_auc_model) %>% 
+  ggplot()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
