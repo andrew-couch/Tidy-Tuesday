@@ -1,2 +1,2 @@
-# Tidy-Tuesday
- Tidy Tuesday Projects 
+# The TidyTuesday Project
+ by Andrew Couch
