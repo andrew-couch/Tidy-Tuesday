@@ -26,7 +26,6 @@ fivethirtyeight_slack_pages
 
 #Create a function to grab the links
 get_links <- function(page){
-  page <- "https://fivethirtyeight.com/tag/slack-chat/page/1/"
   page <- read_html(page)
 
   page %>% 
@@ -58,8 +57,6 @@ get_text <- function(link){
   pb$tick()
   Sys.sleep(1/100)
   
-  link <- "https://fivethirtyeight.com/features/trump-cant-postpone-the-election-but-he-can-delegitimize-the-results/"
-
   link <- read_html(link)
 
 

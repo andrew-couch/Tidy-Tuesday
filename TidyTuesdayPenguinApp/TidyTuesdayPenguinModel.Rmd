@@ -88,7 +88,7 @@ tidy_kfolds <- vfold_cv(tidy_train)
 #Recipes package 
 ## For preprocessing, feature engineering, and feature elimination 
 tidy_rec <- recipe(species~., data = tidy_train) %>% 
-  step_knnimpute("sex") %>% 
+  step_knnimpute(sex) %>% 
   step_dummy(all_nominal(), -all_outcomes()) %>% 
   step_medianimpute(all_predictors()) %>% 
   step_normalize(all_predictors())
