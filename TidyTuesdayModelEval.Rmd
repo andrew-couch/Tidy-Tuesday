@@ -30,14 +30,10 @@ df <- df %>% drop_na()
 ```{r}
 # Convert features to relevant data types 
 df <- df %>% 
-  mutate_all(as.factor) %>% 
-  mutate(tenure = as.numeric(tenure),
-         MonthlyCharges = as.numeric(MonthlyCharges),
-         TotalCharges = as.numeric(TotalCharges)) 
-```
+  mutate_at(vars(-MonthlyCharges,-TotalCharges, -tenure), as.factor) %>%
+  mutate_at(vars(tenure, MonthlyCharges, TotalCharges), as.numeric)
 
-```{r}
-df
+df %>% summary()
 ```
 
 ```{r}
