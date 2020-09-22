@@ -1,0 +1,111 @@
+---
+title: "TidyModelsTidyForecast"
+author: "Andrew Couch"
+date: "9/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidymodels)
+library(tidyverse)
+library(modeltime)
+library(timetk)
+library(lubridate)
+
+df <- timetk::bike_sharing_daily
+```
+
+```{r}
+df <- df %>% select(date = dteday, cnt) 
+df %>%   
+  ggplot(aes(x = date, y = cnt)) + 
+  geom_line()
+```
+# Create data and make stationary
+```{r}
+df <- df %>% 
+  mutate(daily_change = cnt - lag(cnt, n = 1)) %>% 
+  select(date, daily_change) %>% 
+  drop_na() %>% 
+  arrange(date)
+```
+
+# Create train and test sets
+```{r}
+
+train_data <- training(initial_time_split(df, prop = .8))
+test_data <- testing(initial_time_split(df, prop = .8))
+
+train_data %>% mutate(type = "train") %>% 
+  bind_rows(test_data %>% mutate(type = "test")) %>% 
+  ggplot(aes(x = date, y =daily_change, color = type)) + 
+  geom_line()
+```
+
+
+
+```{r}
+
+arima_model <- arima_reg() %>% 
+  set_engine("auto_arima") %>% 
+  fit(daily_change~date, data = train_data)
+
+prophet_model <- prophet_reg() %>% 
+  set_engine("prophet") %>% 
+  fit(daily_change~date, data = train_data)
+
+tslm_model <- linear_reg() %>% 
+  set_engine("lm") %>% 
+  fit(daily_change~as.numeric(date) + factor(month(date, label = TRUE)), data = train_data)
+
+arima_boosted_model <- arima_boost(learn_rate = .015, min_n = 2) %>% 
+  set_engine("auto_arima_xgboost") %>% 
+  fit(daily_change~date + as.numeric(date) + factor(month(date, label = TRUE)), data = train_data)
+
+forecast_table <- modeltime_table(
+  arima_model,
+  prophet_model,
+  tslm_model,
+  arima_boosted_model
+)
+```
+
+
+
+```{r}
+forecast_table %>% 
+  modeltime_calibrate(test_data) %>% 
+  modeltime_accuracy()
+```
+
+
+```{r}
+forecast_table %>% 
+  modeltime_calibrate(test_data) %>% 
+  modeltime_forecast(actual_data = test_data) %>% 
+  plot_modeltime_forecast()
+```
+
+```{r}
+forecast_table %>% 
+  modeltime_refit(df) %>% 
+  modeltime_forecast(h = 7, actual_data = df) %>% 
+  plot_modeltime_forecast()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
