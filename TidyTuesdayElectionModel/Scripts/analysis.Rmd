@@ -1,0 +1,77 @@
+---
+title: "Election Analysis"
+author: "Andrew Couch"
+date: "10/18/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(brms)
+library(lubridate)
+setwd("E:/School/R Work/Election_Model")
+
+polls_df <- read_csv("Data/pres_pollaverages_1968-2016.csv")
+pres_df <- read_csv("Data/presidential_poll_averages_2020.csv")
+load("Data/pres_results.Rdata")
+```
+
+
+```{r}
+democrats <- c("Hubert Humphrey, Jr." , "George S. McGovern", "Jimmy Carter", "Walter F. Mondale", "Michael S. Dukakis", "Bill Clinton", "Al Gore", "John Kerry", "Barack Obama", "Hillary Rodham Clinton")
+
+republicans <- c("Richard M. Nixon", "Gerald R. Ford", "Ronald Reagan", "George Bush", "Bob Dole", "George W. Bush", "John McCain", "Donald Trump")
+```
+
+
+```{r}
+polls_df <- polls_df %>% 
+  select(cycle, state, candidate_name, pct_estimate, modeldate, election_date) %>% 
+  mutate(across(modeldate:election_date, ~as.Date(.x, "%m/%d/%Y"))) %>% 
+  mutate(days_till_election = as.numeric(election_date - modeldate)) %>% 
+  mutate(party = case_when(
+    candidate_name %in% democrats ~ "Democrat",
+    candidate_name %in% republicans ~ "Republican",
+    T ~ "Third_Party"
+  )) %>% 
+  select(-candidate_name) %>% 
+  pivot_wider(names_from = party, values_from = pct_estimate) %>% 
+  unnest() %>% 
+  select(-Third_Party)
+```
+
+```{r}
+polls_df
+```
+
+
+
+
+
+```{r}
+pres_df <- pres_df %>%
+  arrange(state, modeldate) %>% 
+  mutate(election_date = as_date("2020-11-03"), 
+         modeldate = as.Date(modeldate, "%m/%d/%Y"),
+         days_till_election = as.numeric(election_date - modeldate)) %>% 
+  mutate(party = if_else(str_detect(candidate_name, "Biden") == TRUE, "Democrat", "Republican")) %>% 
+  filter(!str_detect(candidate_name, "Convention")) %>% 
+  select(cycle, state, modeldate, election_date, days_till_election, pct_estimate, party) %>% 
+  pivot_wider(names_from = party, values_from = pct_estimate) %>% 
+  unnest()
+```
+
+
+
+```{r}
+polls_df
+pres_df
+
+
+
+```
+
