@@ -1,0 +1,195 @@
+---
+title: "TidyTuesdayTransferLearning"
+author: "Andrew Couch"
+date: "11/23/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(tidytext)
+library(themis)
+library(tfhub)
+library(keras)
+
+df <- read_csv("harrypottertext.csv")
+```
+
+```{r}
+df %>% 
+  count(Character)
+```
+
+```{r}
+df %>% 
+  select(Dialogue) %>% 
+  mutate(pk = row_number()) %>% 
+  unnest_tokens(output = "words", input = "Dialogue", token = "words") %>% 
+  count(pk) %>% 
+  summary()
+```
+
+
+```{r}
+df <- df %>% 
+  select(Character, House, Dialogue) %>% 
+  mutate(dialogue_pk = row_number()) %>% 
+  unnest_tokens(output = "word", input = "Dialogue", token = "words") %>% 
+  group_by(Character, House, dialogue_pk) %>% 
+  mutate(word_index = row_number(),
+         sequence_index = round(word_index / 50)) %>% 
+  group_by(Character, House, dialogue_pk, sequence_index) %>% 
+  summarise(text = str_c(word, sep = " ", collapse = " ")) %>% 
+  ungroup() %>% 
+  select(House, text) 
+  
+```
+
+
+
+
+```{r}
+df %>% count(House)
+
+df <- df %>% filter(House != "No Entry")
+```
+```{r}
+df %>% count(House)
+```
+
+
+```{r}
+df %>% count(House)
+
+# Balance out classes
+df <- recipe(House~., data = df) %>% 
+  step_upsample(House) %>% 
+  prep() %>% 
+  juice()
+
+df %>% count(House)
+```
+
+
+```{r}
+label_dict <- df %>% 
+  mutate(Houselabel = House, 
+         House = as.numeric(House)-1) %>% 
+  select(Houselabel, House) %>% 
+  distinct()
+
+
+df <- df %>% 
+  mutate(House = as.numeric(House)-1,
+         text = as.character(text)) 
+```
+
+
+```{r}
+set.seed(23)
+
+tidy_split <- initial_split(df)
+train_data <- training(tidy_split)
+test_data <- testing(tidy_split)
+```
+
+```{r}
+
+train_text <- train_data$text
+train_labels <- to_categorical(train_data$House)
+
+test_text <- test_data$text
+test_labels <- to_categorical(test_data$House)
+```
+
+```{r}
+train_text %>% length()
+train_labels %>% dim()
+
+test_text %>% length()
+test_labels %>% dim()
+```
+
+
+
+```{r}
+embeddings <- layer_hub(handle = "https://tfhub.dev/google/tf2-preview/gnews-swivel-20dim/1",
+                        trainable = FALSE)
+
+input <- layer_input(shape = shape(), dtype = "string")
+
+output <- input %>% 
+  embeddings() %>% 
+  layer_dense(units = 64, activation = "relu") %>% 
+  layer_dense(units = 32, activation = "relu") %>% 
+  layer_dense(units = 4, activation = "softmax")
+
+model <- keras_model(input, output)
+
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = "accuracy"
+)
+```
+
+
+```{r}
+model %>% 
+  fit(
+    x = train_text,
+    y = train_labels,
+    validate_split = .2,
+    epochs = 50
+  )
+```
+
+
+
+```{r}
+evaluate(model, test_text, test_labels)
+```
+
+```{r}
+
+model_pred <- predict(model, test_text) %>% as_tibble()
+
+
+colnames(model_pred) <- label_dict %>% 
+  select(Houselabel) %>%
+  pluck(1)
+
+
+
+model_pred %>% 
+  bind_cols(tibble("House" = test_data$House)) %>% 
+  left_join(label_dict) %>% 
+  select(-House) %>% 
+  mutate(pk = row_number()) %>% 
+  pivot_longer(-c(pk,Houselabel)) %>% 
+  group_by(Houselabel, pk) %>% 
+  filter(value == max(value)) %>% 
+  select(-value) %>% 
+  ungroup() %>% 
+  mutate(name = as.factor(name)) %>% 
+  conf_mat(truth = Houselabel, estimate = name)
+```
+
+```{r}
+model_pred %>% 
+  bind_cols(tibble("House" = test_data$House)) %>% 
+  left_join(label_dict) %>% 
+  select(-House) %>% 
+  roc_auc(truth = Houselabel, Gryffindor:Slytherin)
+```
+
+
+
+
+
+
