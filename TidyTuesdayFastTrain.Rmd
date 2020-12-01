@@ -1,0 +1,211 @@
+---
+title: "TidyTuesdayFasterTraining"
+author: "Andrew Couch"
+date: "11/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(tidytext)
+library(textrecipes)
+library(themis)
+
+df <- read_csv("harrypottertext.csv")
+```
+
+
+```{r}
+df <- df %>% 
+  select(House, Character, Dialogue) %>% 
+  group_by(House, Character) %>% 
+  summarise(text = str_c(Dialogue, sep = " ", collapse = " ")) %>% 
+  ungroup() %>% 
+  filter(House != "No Entry")
+```
+
+
+
+```{r}
+# Class Imbalance
+df <- recipe(House~., data = df) %>% 
+  step_upsample(House) %>% 
+  prep() %>% 
+  juice() %>% 
+  mutate(text = as.character(text))
+```
+
+```{r}
+set.seed(30)
+tidy_split <- initial_split(df, prop = .8, strata = House)
+tidy_train <- training(tidy_split)
+tidy_test <- testing(tidy_split)
+tidy_k_folds <- vfold_cv(tidy_train)
+```
+
+# Data Types
+```{r}
+# Naive Dataframe
+ naive_words <- df %>% 
+  unnest_tokens("word", "text", "words") %>% 
+  count(House, word) %>% 
+  anti_join(stop_words) %>% 
+  bind_tf_idf(word, House, n) %>% 
+  group_by(House) %>% 
+  top_n(tf_idf, n = 50) %>% 
+  ungroup() %>% 
+  filter(n > 10) %>% 
+  select(word) %>% 
+  distinct()
+
+naive_train <- tidy_train %>% 
+  mutate(pk = row_number()) %>% 
+  unnest_tokens("word", "text", "words") %>% 
+  count(House, pk, word) %>% 
+  inner_join(naive_words) %>% 
+  pivot_wider(names_from = word, values_from = n, values_fill = 0) %>% 
+  select(-pk)
+
+naive_test <- tidy_test %>% 
+  mutate(pk = row_number()) %>% 
+  unnest_tokens("word", "text", "words") %>% 
+  count(House, pk, word) %>% 
+  inner_join(naive_words) %>% 
+  pivot_wider(names_from = word, values_from = n, values_fill = 0) %>% 
+  select(-pk)
+
+naive_k_folds_data <- vfold_cv(naive_train)
+```
+
+
+
+# Pre-processing
+```{r}
+text_rec <- recipe(House ~ text, data = tidy_train) %>% 
+  step_tokenize(text) %>% 
+  step_stopwords(text) %>% 
+  step_tokenfilter(text, max_tokens = 75) %>% 
+  step_tfidf(text)
+
+# Expensive Pre-processing
+exp_rec <- recipe(House ~ text, data = tidy_train) %>% 
+  step_tokenize(text) %>% 
+  step_stopwords(text) %>% 
+  step_tokenfilter(text, max_tokens = 100) %>% 
+  step_tfidf(text) %>% 
+  step_isomap(all_predictors())
+```
+
+
+
+# Models
+```{r}
+# Simple model
+elastic_model <- multinom_reg(penalty = tune(), mixture = tune()) %>% 
+  set_engine("glmnet") %>% 
+  set_mode("classification")
+
+# Complex model
+xgboost_model <- boost_tree(trees = tune(), tree_depth = tune()) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("classification")
+```
+
+
+# Parameters
+```{r}
+elastic_grid <- parameters(elastic_model) %>% grid_regular()
+elastic_entropy <- parameters(elastic_model) %>% grid_max_entropy()
+
+xgboost_entropy_grid <- parameters(xgboost_model) %>% grid_max_entropy()
+xgboost_grid <- parameters(xgboost_model) %>% grid_regular(filter = c(trees > 1 & tree_depth > 1))
+```
+
+
+```{r}
+elastic_grid
+elastic_entropy
+xgboost_grid
+xgboost_entropy_grid
+```
+
+```{r}
+# Compare data structures using a regular grid
+naive_wf <- workflow() %>% 
+  add_model(elastic_model) %>% 
+  add_formula(House~.)
+
+library(hardhat)
+sparse_bp <- default_recipe_blueprint(composition = "dgCMatrix")
+
+correct_wf <- workflow() %>% 
+  add_model(elastic_model) %>% 
+  add_recipe(text_rec, blueprint = sparse_bp)
+
+begin <- Sys.time()
+naive_res <- tune_grid(naive_wf,
+          grid = elastic_grid,
+          resamples = naive_k_folds_data)
+end1 <- Sys.time() - begin
+
+begin <- Sys.time()
+correct_res <- tune_grid(correct_wf,
+          grid = elastic_grid,
+          resamples = tidy_k_folds)
+end2 <- Sys.time() - begin
+```
+
+
+```{r}
+# Compare expensive pre-processing
+expensive_wf <- workflow() %>% 
+  add_model(elastic_model) %>% 
+  add_recipe(exp_rec, blueprint = sparse_bp)
+
+begin <- Sys.time()
+expensive_res <- tune_grid(expensive_wf,
+          grid = elastic_grid,
+          resamples = tidy_k_folds)
+end3 <- Sys.time() - begin
+```
+
+
+```{r}
+begin <- Sys.time()
+bayes_res <- tune_bayes(
+  correct_wf,
+  resamples = tidy_k_folds,
+  control = control_bayes(no_improve = 3, verbose = TRUE)
+)
+end4 <- Sys.time()-begin
+```
+
+
+```{r}
+library(doParallel)
+cl <- makePSOCKcluster(4)
+cl <- registerDoParallel(cl)
+# Compare parallel processing
+begin <- Sys.time()
+tune_grid(correct_wf,
+          grid = elastic_grid,
+          resamples = tidy_k_folds,
+          control = control_grid(allow_par = TRUE, parallel_over = "everything"))
+end5 <- Sys.time() - begin
+
+stopImplicitCluster()
+```
+
+# Comparisons
+```{r}
+tibble(train_times = c(end1, end2, end3, end4, end5),
+       train_desc = c("Naive", "Matrix", "Expensive", "Bayes", "Parallel")) %>% 
+  ggplot(aes(x = train_desc, y = train_times)) + 
+  geom_col()
+```
+
