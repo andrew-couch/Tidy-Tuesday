@@ -1,0 +1,45 @@
+Video title,Video publish time,Dislikes,Likes,Subscribers lost,Subscribers gained,Average view duration,Unique viewers,Average percentage viewed (%),Shares,Views,Watch time (hours),Subscribers,Impressions,Impressions click-through rate (%)
+Total,,8,1398,54,1068,0:06:47,0,17.62,226,28441,3218.5542,1014,325373,4.98
+TidyTuesday: Simulating the 2020 Presidential Election,28-Oct-20,2,37,0,6,0:03:37,,19.16,2,999,60.4913,6,8806,6.75
+TidyTuesday: 5 Tips for Learning Data Science,11-Aug-20,1,26,0,2,0:04:18,,35.43,2,396,28.4128,2,5142,4.05
+TidyTuesday: Model Evaluation using TidyModels and TidyPosterior,18-Aug-20,1,47,0,7,0:09:20,,30.24,2,565,88.0044,7,6584,4.13
+TidyTuesday: Creating a UFC dashboard using R Shiny with shinydashboard,20-May-20,1,82,1,68,0:05:58,,10.94,24,3256,324.2887,67,38929,5.38
+TidyTuesday: Analyzing CO2 Emissions in R using the Tidyverse,17-Feb-20,1,17,0,14,0:07:22,,14.22,2,558,68.6621,14,4771,7.11
+TidyTuesday: Comparing TidyModels with Caret,28-Apr-20,1,108,0,111,0:07:25,,17.85,19,2667,330.0273,111,30651,5.21
+TidyTuesday: Tidy Forecasting with Modeltime,22-Sep-20,1,46,0,12,0:06:31,,33.91,9,724,78.6372,12,5606,5.6
+TidyTuesday: NLP Modeling with TidyModels and Keras,5-May-20,0,35,0,22,0:08:06,,13.98,5,751,101.4783,22,9692,3.95
+TidyTuesday: Transfer Learning with Tfhub,25-Nov-20,0,20,0,1,0:05:05,,18.39,1,266,22.6094,1,3412,4.6
+TidyTuesday: Ensembling Tidymodels with Stacks,13-Oct-20,0,39,0,13,0:09:30,,24.29,8,587,92.9726,13,4976,5.27
+TidyTuesday: Implementing an Elo system in the UFC,11-May-20,0,11,0,0,0:08:08,,15.36,3,280,37.9733,0,4894,3.47
+TidyTuesday: How to Create Functions In R,21-Jul-20,0,58,0,27,0:07:14,,25.75,5,812,98.0512,27,10423,4.34
+TidyTuesday: Computer Vision with TidyModels and t-SNE,26-May-20,0,26,2,34,0:07:05,,18.51,2,522,61.6355,32,8650,3.78
+TidyTuesday: Forecasting using ARMA and Linear Models,10-Jun-20,0,30,0,6,0:07:19,,15.59,3,476,58.1505,6,7434,3.93
+TidyTuesday: Introduction to Text Mining in R,17-Mar-20,0,5,0,1,0:05:18,,10.09,1,218,19.2981,1,2321,6.16
+"Text Mining Explained: Topic Modeling, TF-IDF, and Weighted Log-Odds Ratio",22-Apr-20,0,8,0,2,0:06:07,,11.68,1,191,19.5013,2,3792,3.01
+TidyTuesday: Creating Animated Charts using gganimate,28-Jul-20,0,32,0,9,0:05:59,,16.11,3,506,50.5573,9,7771,3.92
+Tidy Tuesday: Analyzing Beer Production and Forecasting Using Prophet and The Tidyverse,1-Apr-20,0,26,1,18,0:05:54,,14.36,7,759,74.701,17,7298,6.73
+TidyTuesday: Using XGBoost in Excel with Tidymodels and Plumber,15-Sep-20,0,38,0,4,0:08:32,,28.2,7,538,76.5825,4,7351,3.35
+TidyTuesday: Computer Vision and NLP with Convolutional Neural Networks,11-Nov-20,0,20,0,7,0:05:20,,13.85,0,306,27.2808,7,3996,4.35
+TidyTuesday: Predicting Hockey Goals using Linear Models,4-Mar-20,0,7,0,1,0:10:04,,19.87,1,214,35.9619,1,1669,7.49
+TidyTuesday: Creating Multilevel Models using TidyModels,24-Jun-20,0,31,0,15,0:07:00,,21.98,5,783,91.515,15,9608,4.51
+TidyTuesday: Improving Model Train Times with TidyModels,2-Dec-20,0,19,0,2,0:04:55,,22.83,2,293,24.0251,2,3167,4.45
+TidyTuesday: Deploying TidyModels using R Shiny,30-Jun-20,0,58,0,36,0:08:22,,18.84,9,1152,160.9278,36,14127,4.39
+TidyTuesday: Feature Engineering with Recipes and TidyModels,3-Jun-20,0,46,0,19,0:08:16,,23.43,10,803,110.8457,19,9389,4.95
+TidyTuesday: Beginner to Advanced Dashboards with R Shiny,16-Dec-20,0,32,0,5,0:05:13,,20.74,4,402,35.0235,5,2633,7.06
+TidyTuesday: Creating a song recommendation engine in R,15-Apr-20,0,20,0,8,0:05:51,,10.82,15,527,51.5176,8,6403,5.2
+TidyTuesday: Creating Dashboards using R Shiny,7-Jul-20,0,66,0,27,0:06:59,,12.69,11,1966,229.3126,27,21296,5.8
+TidyTuesday: Estimating University ROI in R,10-Mar-20,0,8,0,4,0:05:54,,14.31,0,169,16.6614,4,1910,5.45
+TidyTuesday: Modeling Interaction Effects using TidyModels,17-Jun-20,0,23,0,15,0:10:22,,20.45,3,593,102.5466,15,7800,4.38
+TidyTuesday: Classification Model Metrics using Tidymodels and Yardstick,26-Aug-20,0,38,0,15,0:08:21,,23.84,4,655,91.3068,15,6578,4.41
+Computational Thinking Review Questions,,0,0,0,0,0:10:55,,47.51,1,4,0.728,0,15,0
+TidyTuesday: Creating Interpretable Black Box Models using LIME and ALE,15-Jul-20,0,40,0,12,0:06:47,,23.34,11,701,79.3104,12,7707,4.93
+TidyTuesday: 5 Tips for Data Science Projects,30-Sep-20,0,23,0,2,0:03:58,,40.88,4,475,31.5018,2,4734,5.26
+How to Create The Economist Style Charts in R Using ggplot2 and Tidyverse,7-Apr-20,0,44,0,19,0:07:38,,14.87,6,743,94.5324,19,7035,6.77
+TidyTuesday: Tuning Pre-Processing Parameters with Tidymodels,1-Sep-20,0,37,0,1,0:07:43,,28.37,2,430,55.3718,1,4916,4.39
+TidyTuesday: Multiclass Classification using Tidymodels,21-Oct-20,0,28,0,3,0:07:16,,24.46,4,444,53.7901,3,4701,5.17
+TidyTuesday: Autoencoder Basics,4-Nov-20,0,27,0,3,0:06:03,,17.24,2,355,35.8724,3,4159,4.4
+TidyTuesday: Solving The Riddler using R,9-Dec-20,0,14,0,2,0:05:09,,33.43,3,234,20.1213,2,2277,5.31
+TidyTuesday: Neural Network Regularization with Keras,18-Nov-20,0,24,0,0,0:02:50,,23.95,5,267,12.6098,0,3044,4.66
+TidyTuesday: Web Scraping Data using Rvest,4-Aug-20,0,35,0,5,0:06:01,,34.67,10,688,69.1096,5,8336,4.53
+TidyTuesday: Generating Trump Tweets using Keras,6-Oct-20,0,28,0,5,0:05:05,,24.22,2,461,39.087,5,4297,5.17
+TidyTuesday: Using SQL with R Markdown and Tidyverse,8-Sep-20,0,32,0,11,0:05:32,,31.87,5,522,48.1564,11,6523,4.37
