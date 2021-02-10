@@ -1,0 +1,235 @@
+---
+title: "Feature Engineering"
+author: "Andrew Couch"
+date: "8/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(here)
+
+df <- read_csv(here("Data/fight_data.csv"))
+```
+
+# Create Fight Metrics
+```{r}
+lag_sum <- function(.x){
+  
+  lag(cumsum(.x), default = 0)
+  
+}
+
+lag_mean <- function(.x){
+  
+  if_else(is.nan(lag(cummean(.x), default = 0)) == TRUE, 0, lag(cummean(.x), default = 0)) 
+  
+}
+
+fighter_table <- df %>% 
+  mutate(res = if_else(res == "W", 1, 0)) %>% 
+  group_by(fighter, weight_class) %>% 
+  arrange(fighter, date) %>% 
+  # Create fight record features 
+  
+  # Create loss and win type feature
+  # Count the outcome of the fight for each fighter
+  mutate(win_type = 1,
+         loss_type = if_else(res == 0, 1, 0),
+         loss_cat = method,
+         win_type = win_type * res) %>% 
+  # Convert outcome to a one-hot-encoded win and loss features 
+  pivot_wider(names_from = method, names_prefix = "win_", 
+              values_from = win_type, values_fill = list(win_type = 0)) %>% 
+  pivot_wider(names_from = "loss_cat", names_prefix = "loss_", 
+              values_from = loss_type, values_fill = list(loss_type = 0)) %>% 
+  rename_all(.funs = ~str_replace_all(.x, " ", "_") %>% tolower()) %>% 
+  
+  # Create the accumulated lagged loss and win features 
+  mutate_at(vars(contains("win_")), lag_sum) %>% 
+  mutate_at(vars(contains("loss_")), lag_sum) %>% 
+
+  # Create total losses and total wins 
+  mutate(num_fights = row_number()-1,
+         total_wins =  lag_sum(res),
+         total_losses = num_fights - total_wins,
+         total_rounds = lag_sum(rounds)) %>% 
+
+  # Create damage features 
+  mutate(total_strikes_absorbed =  lag_sum(strikes_received),
+         total_kds_absorbed = lag_sum(tds_received),
+         total_sig_strikes_absorbed =  lag_sum(sig_strikes_received),
+         total_tds_absorbed = lag_sum(tds_received),
+         
+         total_strikes_attempted = lag_sum(strike_attempts),
+         total_sig_strikes_attempted = lag_sum(sig_strike_attempts),
+         total_tds_attempted = lag_sum(td_attempts),
+         
+         total_strikes_landed = lag_sum(strike_landed),
+         total_sig_strike_landed = lag_sum(sig_strike_landed),
+         total_tds_landed = lag_sum(td_landed),
+         
+         total_strikes_avoided = lag_sum(strikes_avoided),
+         total_sig_strikes_avoided = lag_sum(sig_strikes_avoided),
+         total_tds_avoided = lag_sum(tds_defended),
+         
+         strike_accuracy = total_strikes_landed / total_strikes_attempted,
+         sig_strike_accruacy = total_sig_strike_landed / total_sig_strikes_attempted,
+         td_accuracy = total_tds_landed / total_tds_attempted,
+         
+         strike_defense = total_strikes_avoided / (total_strikes_absorbed + total_strikes_avoided),
+         td_defense = total_tds_avoided / (total_tds_absorbed + total_tds_avoided),
+         sig_strike_defense = total_sig_strikes_avoided / (total_sig_strikes_absorbed + total_sig_strikes_avoided)) %>% 
+  
+  # Change Nans to 0 
+  mutate_if(is.numeric, .funs = ~if_else(is.nan(.x), 0.0, .x)) %>% 
+
+  # Create differential features 
+  mutate(strike_differential = strike_landed - strikes_received,
+         sig_strike_differential = sig_strike_landed-sig_strikes_received,
+         avg_strike_differential = lag_mean(strike_differential),
+         avg_sig_strike_differential = lag_mean(sig_strike_differential)) %>% 
+
+  # Create days since last fight feature
+  arrange(date) %>% 
+  mutate(last_fight_date = lag(date),
+         days_since_last_fight = if_else(is.na(last_fight_date), 
+                                         0, 
+                                         difftime(date, last_fight_date, units = "days") %>% as.numeric())) %>% 
+
+  # Remove and reformatting column features
+  select(-rounds, -time, -date, -last_fight_date) %>%
+  mutate(across(.cols = c(kd, kds_received, pass, rev, 
+                    sig_strike_attempts, sig_strike_landed, 
+                    sig_strikes_avoided, sig_strikes_received, 
+                    strike_differential, sig_strike_differential,
+                    strike_attempts, strike_landed, strikes_avoided, strikes_received, 
+                    sub_attempts, td_attempts, td_landed, tds_defended, tds_received),
+                .names = "{col}_weighted",
+                .fns = ~case_when(
+                  is.na(lag(.x, n = 3)) == FALSE  ~ .6*lag(.x, n = 1) + .3*lag(.x, n = 2) + .1*lag(.x, n = 3),
+                  is.na(lag(.x, n = 2)) == FALSE ~ .8*lag(.x, n = 1) + .2*lag(.x, n = 2),
+                  T ~ lag(.x, n = 1, default = 0)
+                )
+                )
+         ) %>% 
+  mutate(across(.cols = c(kd, kds_received, pass, rev, 
+                          sig_strike_attempts, sig_strike_landed, sig_strikes_avoided, sig_strikes_received, 
+                          strike_attempts, strike_landed, strikes_avoided, strikes_received, 
+                          sub_attempts, td_attempts, td_landed, tds_defended,tds_received),
+                .fns = ~lag(.x, n = 1, default = 0),
+                .names = "{col}_lag1"),
+         across(.cols = c(kd, kds_received, pass, rev, 
+                          sig_strike_attempts, sig_strike_landed, sig_strikes_avoided, sig_strikes_received, 
+                          strike_attempts, strike_landed, strikes_avoided, strikes_received, 
+                          strike_differential, sig_strike_differential,
+                          sub_attempts, td_attempts, td_landed, tds_defended,tds_received),
+                .fns = ~lag(.x, n = 2, default = 0),
+                .names = "{col}_lag2"),
+         across(.cols = c(kd, kds_received, pass, rev, 
+                          sig_strike_attempts, sig_strike_landed, sig_strikes_avoided, sig_strikes_received, 
+                          strike_attempts, strike_landed, strikes_avoided, strikes_received, 
+                          strike_differential, sig_strike_differential,
+                          sub_attempts, td_attempts, td_landed, tds_defended, tds_received),
+                .fns = ~lag(.x, n = 3, default = 0),
+                .names = "{col}_lag3"),
+         across(.cols = c(kd, kds_received, pass, rev, 
+                          sig_strike_attempts, sig_strike_landed, sig_strikes_avoided, sig_strikes_received, 
+                          strike_attempts, strike_landed, strikes_avoided, strikes_received, 
+                          strike_differential, sig_strike_differential,
+                          sub_attempts, td_attempts, td_landed, tds_defended, tds_received), 
+                .fns = lag_mean, 
+                .names = "avg_{col}")) %>% 
+  # Final reformatting 
+  ungroup() %>% 
+  select(-c(kd, kds_received, pass, rev, 
+                          sig_strike_attempts, sig_strike_landed, sig_strikes_avoided, sig_strikes_received, 
+                          strike_attempts, strike_landed, strikes_avoided, strikes_received, 
+                          strike_differential, sig_strike_differential,
+                          sub_attempts, td_attempts, td_landed, tds_defended, tds_received)) %>% 
+  select(sort(current_vars())) %>% 
+  select(fight_pk, fighter, weight_class, res, everything())  
+```
+
+
+
+# Create ELO Model
+```{r}
+library(elo)
+
+elo_model_data <- fighter_table %>% 
+  select(fight_pk, fighter, res) %>% 
+  left_join(fighter_table %>% select(fight_pk, opponent = fighter), by = "fight_pk") %>% 
+  group_by(fight_pk) %>% 
+  filter(fighter != opponent) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  arrange(fight_pk) 
+
+elo_model <- elo.run(res ~ fighter + opponent, data = elo_model_data, k = 25)
+
+elo_table <- bind_rows(
+  elo_model %>% 
+    as.data.frame() %>% 
+    as_tibble() %>% 
+    select(fighter = team.A, elo = elo.A, elo_change = update.A) %>% 
+    bind_cols(elo_model_data %>% select(fight_pk)),
+  
+  elo_model %>% 
+    as.data.frame() %>% 
+    as_tibble() %>% 
+    select(fighter = team.B, elo = elo.B, elo_change = update.B) %>% 
+    bind_cols(elo_model_data %>% select(fight_pk))
+) %>% 
+  arrange(fighter, fight_pk) %>% 
+  group_by(fighter) %>% 
+  mutate(elo_actual = lag(elo, n = 1, default = 1500),
+         elo_change = lag(elo_change, n = 1, default = 0)) %>% 
+  select(fighter, elo = elo_actual, elo_change, fight_pk)
+  
+
+fighter_table <- fighter_table %>% 
+  left_join(elo_table, by = c("fight_pk", "fighter")) 
+
+fighter_table
+```
+
+
+```{r}
+# Join fighter table and surrogate opponent table
+fight_table <- inner_join(fighter_table, rename_all(fighter_table, .funs = ~paste0("opp_", .x)), 
+            by = c("fight_pk" = "opp_fight_pk")) %>% 
+  # Remove any fights where fighter is fighting itself
+  filter(fighter != opp_fighter) %>% 
+  # Remove redundant data 
+  select(-weight_class, -opp_weight_class, -opp_res) %>% 
+  # Format the table 
+  select(fight_pk, fighter, opp_fighter, res, everything()) %>% 
+  # Create differentials
+  mutate(is_favored = if_else(elo > opp_elo, "favored", "not_favored"),
+         elo_dif = elo - opp_elo,
+         fight_dif = num_fights - opp_num_fights,
+         elo_prob = 1 / (1 + 10^((opp_elo - elo)/400))) %>% 
+  # Create fight metrics
+  mutate(strike_metric = log((avg_strike_landed + 1 / (avg_strikes_received + 2)))*`win_ko/tko`,
+         opp_strike_metric = log((opp_avg_strike_landed + 1 / (opp_avg_strikes_received + 2)))*`opp_win_ko/tko`,
+         strike_dif = strike_metric - opp_strike_metric,
+         strike_favor = if_else(strike_metric > opp_strike_metric, "favored", "unfavored")) %>%
+  mutate(submission_metric = log((avg_td_landed * (win_submission + 1)) + 1) + 
+           log((avg_tds_defended + 1) / (loss_submission + 2)),
+         opp_submission_metric = log((opp_avg_td_landed * (opp_win_submission + 1)) + 1) + 
+           log((opp_avg_tds_defended + 1) / (opp_loss_submission + 2)),
+         sub_dif = submission_metric - opp_submission_metric,
+         sub_favor = if_else(submission_metric > opp_submission_metric, "favored", "unfavored"))
+```
+
+```{r}
+# Export tables 
+write_csv(fight_table, here("Data/fights.csv"))
+write_csv(fighter_table, here("Data/fighter_table.csv"))
+```

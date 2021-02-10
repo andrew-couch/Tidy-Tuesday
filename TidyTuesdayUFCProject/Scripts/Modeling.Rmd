@@ -1,0 +1,742 @@
+---
+title: "UFC Modeling"
+author: "Andrew Couch"
+date: "1/31/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(finetune)
+library(vip)
+library(keras)
+library(here)
+
+df <- read_csv(here("Data/fight_data.csv"))
+match_df <- read_csv(here("Data/fights.csv"))
+fighter_df <- read_csv(here("Data/fighter_table.csv"))
+```
+
+# Individual Component Data 
+```{r}
+target_components <- df %>% 
+  select(fight_pk, fighter, round_finished,
+         kd, sig_strike_attempts, sig_strike_landed,
+         strike_attempts, strike_landed,
+         sub_attempts, td_attempts, td_landed) %>% 
+  rename_at(vars(!matches("fight_pk|fighter")), ~paste0("target_", .x)) %>% 
+  mutate(across(-c(fight_pk, fighter, target_round_finished), .fns = ~.x / target_round_finished)) %>% 
+  select(-target_round_finished, -target_strike_attempts, -target_sig_strike_attempts, -target_td_attempts)
+
+ind_comp_df <- match_df %>% 
+  arrange(desc(fight_pk)) %>% 
+  select_at(vars(!matches("rev|opp_fighter|res|loss|win"))) %>% 
+  left_join(target_components, by = c("fight_pk", "fighter")) %>% 
+  select_at(vars(contains("target"), everything())) %>% 
+  select(fight_pk, fighter, everything()) %>% 
+  mutate(is_favored = as.factor(is_favored),
+         strike_favor = as.factor(strike_favor),
+         sub_favor = as.factor(sub_favor)) %>% 
+  mutate_if(is.numeric, ~replace_na(.x, 0))
+```
+
+# Outcome Model
+```{r}
+dif_df <- target_components %>% 
+  pivot_longer(-c(fight_pk, fighter), values_to = "fighter_val") %>% 
+  left_join(target_components %>% 
+              rename(opponent = fighter) %>% 
+              pivot_longer(-c(fight_pk, opponent), values_to = "opponent_val"),
+            by = c("fight_pk", "name")) %>% 
+  filter(fighter != opponent) %>% 
+  mutate(dif = fighter_val - opponent_val) %>% 
+  select(fight_pk, fighter, name, dif) %>% 
+  pivot_wider(names_from = name, values_from = dif) %>% 
+  left_join(match_df %>% select(fight_pk, fighter, res), by = c("fight_pk", "fighter")) %>% 
+  select(fight_pk, fighter, res, everything()) 
+```
+
+
+
+```{r}
+draw_matches <- match_df %>% 
+  group_by(fight_pk) %>% 
+  summarise(res = sum(res)) %>% 
+  ungroup() %>% 
+  filter(res == 0) %>% 
+  select(fight_pk)
+```
+
+## Data Partition
+```{r}
+model_dif_df <- dif_df %>% 
+  group_by(fight_pk) %>% 
+  sample_n(1) %>% 
+  ungroup() %>% 
+  anti_join(draw_matches, by = "fight_pk") %>% 
+  mutate(res = if_else(res == 1, "Win", "Lose"),
+         res = as.factor(res),
+         res = fct_relevel(res, "Win", "Lose")) %>% 
+  select(fight_pk, fighter, res, target_kd, target_sig_strike_landed, target_strike_landed, target_sub_attempts, target_td_landed) %>% 
+  mutate(across(-c(fight_pk, fighter, res), .fns = ~if_else(.x > 0, 1, 0), .names = "{.col}_advantage")) %>% 
+  rowwise() %>% 
+  mutate(component_total = sum(c_across(target_kd_advantage:target_td_landed_advantage))) %>% 
+  select_at(vars(!matches("advantage")))
+```
+
+
+```{r}
+set.seed(31)
+
+dif_split <- initial_split(model_dif_df)
+train_dif <- training(dif_split)
+test_dif <- testing(dif_split)
+k_folds_dif <- vfold_cv(train_dif)
+```
+
+## Pre-Processing and Metrics
+```{r}
+dif_rec <- recipe(res~., data = train_dif) %>% 
+  step_rm(fight_pk, fighter) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes())
+
+dif_metrics <- metric_set(accuracy, roc_auc, sens, spec, mn_log_loss)
+
+dif_control <- control_grid(save_pred = TRUE)
+```
+
+## Modeling
+```{r}
+dif_xgboost <- boost_tree(trees = tune(), tree_depth = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost")
+
+dif_xgboost_grid <- grid_regular(parameters(dif_xgboost), levels = 10)
+```
+
+```{r,eval=FALSE}
+dif_tune <- tune_grid(
+  dif_xgboost,
+  dif_rec,
+  metrics = dif_metrics,
+  control = dif_control,
+  grid = dif_xgboost_grid,
+  resamples = k_folds_dif
+)
+
+save(dif_tune, file = here("Data/outcome_tune.RDS"))
+```
+
+# Components Model
+## Data Partition
+```{r}
+set.seed(31)
+
+ind_split <- initial_split(ind_comp_df)
+train_ind <- training(ind_split)
+test_ind <- testing(ind_split)
+k_folds_ind <- vfold_cv(train_ind)
+```
+
+
+
+## Pre-Processing and Metrics
+```{r}
+ind_metrics <- metric_set(rmse, mae, rsq, mape, smape)
+
+kd_rec <- recipe(target_kd ~ ., data = train_ind) %>% 
+  step_rm(fight_pk, fighter,
+          target_sig_strike_landed, target_strike_landed, 
+          target_sub_attempts, target_td_landed) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+sig_strike_landed_rec <- recipe(target_sig_strike_landed ~ ., data = train_ind) %>% 
+  step_rm(fight_pk, fighter,
+          target_kd, target_strike_landed, 
+          target_sub_attempts, target_td_landed) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+strike_landed_rec <- recipe(target_strike_landed ~ ., data = train_ind) %>% 
+  step_rm(fight_pk, fighter,
+          target_sig_strike_landed, target_kd, 
+          target_sub_attempts, target_td_landed) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+sub_attempts_rec <- recipe(target_sub_attempts ~ ., data = train_ind) %>% 
+  step_rm(fight_pk, fighter,
+          target_sig_strike_landed, target_kd, target_strike_landed, target_td_landed) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+td_landed_rec <- recipe(target_td_landed ~ ., data = train_ind) %>% 
+ step_rm(fight_pk, fighter,
+          target_sig_strike_landed, target_kd, target_strike_landed, 
+          target_sub_attempts) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+```
+
+## Modeling
+### XGBoost
+```{r}
+ind_xgboost <- boost_tree(trees = tune(), tree_depth = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("xgboost")
+
+model_control <- control_sim_anneal(verbose = TRUE)
+options(tidymodels.dark = TRUE)
+```
+
+```{r,eval=FALSE}
+kd_tune <- tune_sim_anneal(
+  ind_xgboost,
+  kd_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(kd_tune, file = here("Data/kd_tune.RDS"))
+
+sig_strike_landed_tune <- tune_sim_anneal(
+  ind_xgboost,
+  sig_strike_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(sig_strike_landed_tune, file = here("Data/sig_strike_landed_tune.RDS"))
+
+
+strike_landed_tune <- tune_sim_anneal(
+  ind_xgboost,
+  strike_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(strike_landed_tune, file = here("Data/strike_landed_tune.RDS"))
+
+sub_attempts_tune <- tune_sim_anneal(
+  ind_xgboost,
+  sub_attempts_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(sub_attempts_tune, file = here("Data/sub_attempts_tune.RDS"))
+
+td_landed_tune <- tune_sim_anneal(
+  ind_xgboost,
+  td_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(td_landed_tune, file = here("Data/td_landed_tune.RDS"))
+```
+
+
+
+### Neural Network
+```{r}
+train_output <- train_ind %>% select(target_kd, target_sig_strike_landed, target_strike_landed, target_sub_attempts, target_td_landed)
+train_input <- train_ind %>% select_at(vars(!matches("target_|fight_pk|fighter")))
+
+test_output <- test_ind %>% select(target_kd, target_sig_strike_landed, target_strike_landed, target_sub_attempts, target_td_landed)
+test_input <- test_ind %>% select_at(vars(!matches("target_|fight_pk|fighter")))
+
+neural_network_rec <- recipe(~., data = train_input) %>% 
+  step_YeoJohnson(all_numeric()) %>% 
+  step_range(all_numeric()) %>% 
+  step_dummy(all_nominal(), one_hot = TRUE) %>% 
+  prep()
+
+train_input <- bake(neural_network_rec, new_data = train_input) %>% as.matrix()
+test_input <- bake(neural_network_rec, new_data = test_input) %>% as.matrix()
+
+train_output <- as.matrix(train_output)
+test_output <- as.matrix(test_output)
+```
+
+
+```{r,eval=FALSE}
+model <- keras_model_sequential() %>% 
+  layer_dense(input_shape = ncol(train_input), units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = ncol(train_output))
+
+model %>% 
+  compile(
+    optimizer = optimizer_adam(),
+    loss = "mse",
+    metrics = list("mean_absolute_error"),
+    loss_weights = c(0.13154802, 0.42965849, 0.19235573, 0.14902811, 0.09740966)
+  )
+
+history <- model %>% fit(
+  x = train_input,
+  y = train_output,
+  epochs = 200,
+  validation_split = 0.2,
+  callbacks = callback_early_stopping(patience = 20)
+)
+```
+
+#### Estimate component MAE weights
+```{r}
+set.seed(6)
+val_index <- sample.int(train_input %>% dim() %>% pluck(1), 
+                        size = floor(train_input %>% dim() %>% pluck(1)*.8), 
+                        replace = FALSE)
+
+train_input <- train_input[val_index,]
+train_output <- train_output[val_index,]
+validation_input <- train_input[-val_index,]
+validation_output <- train_output[-val_index,]
+
+tune_keras_weights <- function(weights){
+  
+  model <- keras_model_sequential() %>% 
+    layer_dense(input_shape = ncol(train_input), units = 512, activation = "relu") %>% 
+    layer_dense(units = 512, activation = "relu") %>% 
+    layer_dense(units = 512, activation = "relu") %>% 
+    layer_dense(units = ncol(train_output))
+  
+  model %>% 
+    compile(
+      optimizer = optimizer_adam(),
+      loss = "mse",
+      metrics = list("mean_absolute_error"),
+      loss_weights = weights
+    )
+  
+  model %>% fit(
+    x = train_input,
+    y = train_output,
+    epochs = 200,
+    validation_split = 0.2,
+    callbacks = callback_early_stopping(patience = 5),
+    verbose = 0
+  )
+  
+  abs(predict(model, validation_input) - validation_output) %>% colMeans() %>% as_tibble_row()
+  
+}
+```
+
+```{r,eval=FALSE}
+library(gtools)
+
+get_dirichlet <- function(x){
+  rdirichlet(1, c(1, 1, 1, 1, 1))
+}
+
+keras_tune <- tibble(iteration = 1:50) %>% 
+  mutate(weights = map(iteration, get_dirichlet),
+         res = map(weights, tune_keras_weights))
+
+keras_tune %>% 
+  select(weights, res) %>% 
+  mutate(weights = map(weights, as.data.frame)) %>% 
+  unnest(weights) %>% 
+  unnest(res) %>% 
+  unite(weights, c(V1:V5), sep = ", ") %>% 
+  rowwise() %>% 
+  mutate(total = sum(c_across(target_kd:target_td_landed))) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = total)) + 
+  geom_density()
+
+keras_tune %>% 
+  select(weights, res) %>% 
+  mutate(weights = map(weights, as.data.frame)) %>% 
+  unnest(weights) %>% 
+  unnest(res) %>% 
+  rowwise() %>% 
+  mutate(total = sum(c_across(target_kd:target_td_landed))) %>% 
+  ungroup() %>% 
+  select(V1:V5, total) %>% 
+  cor() %>% 
+  as_tibble(rownames = "feature") %>% 
+  select(feature, total) %>% 
+  arrange(total)
+
+get_weighted_dirichlet <- function(x){
+  rdirichlet(1, c(1, 1, 1.5, 1, 1.5))
+}
+
+keras_tune <- tibble(iteration = 1:50) %>% 
+  mutate(weights = map(iteration, get_weighted_dirichlet),
+         res = map(weights, tune_keras_weights))
+
+keras_tune %>% 
+  select(weights, res) %>% 
+  mutate(weights = map(weights, as.data.frame)) %>% 
+  unnest(weights) %>% 
+  unnest(res) %>% 
+  rowwise() %>% 
+  mutate(total = sum(c_across(target_kd:target_td_landed))) %>% 
+  ungroup() %>% 
+  select(V1:V5, total) %>% 
+  arrange(total)
+```
+
+#### Neural Network Architecture Tune
+```{r}
+model <- keras_model_sequential() %>% 
+  layer_dense(input_shape = ncol(train_input), units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = ncol(train_output))
+
+model %>% 
+  compile(
+    optimizer = optimizer_adam(),
+    loss = "mse",
+    metrics = list("mean_absolute_error"),
+    loss_weights = c(0.023177977, 0.328520427, 0.10806194, 0.143625994, 0.396613661)
+  )
+
+history <- model %>% fit(
+  x = train_input,
+  y = train_output,
+  epochs = 200,
+  validation_split = 0.2,
+  callbacks = callback_early_stopping(patience = 20)
+)
+
+model <- keras_model_sequential() %>% 
+  layer_dense(input_shape = ncol(train_input), units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dropout(rate = 0.5) %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = ncol(train_output))
+
+model %>% 
+  compile(
+    optimizer = optimizer_adam(),
+    loss = "mse",
+    metrics = list("mean_absolute_error"),
+    loss_weights = c(0.023177977, 0.328520427, 0.10806194, 0.143625994, 0.396613661)
+  )
+
+history2 <- model %>% fit(
+  x = train_input,
+  y = train_output,
+  epochs = 200,
+  validation_split = 0.2,
+  callbacks = callback_early_stopping(patience = 20)
+)
+
+
+model <- keras_model_sequential() %>% 
+  layer_dense(input_shape = ncol(train_input), units = 1024, activation = "relu") %>% 
+  layer_dense(units = 1024, activation = "relu") %>% 
+  layer_dropout(rate = 0.05) %>% 
+  layer_dense(units = 1024, activation = "relu") %>% 
+  layer_dense(units = ncol(train_output))
+
+model %>% 
+  compile(
+    optimizer = optimizer_adam(),
+    loss = "mse",
+    metrics = list("mean_absolute_error"),
+    loss_weights = c(0.023177977, 0.328520427, 0.10806194, 0.143625994, 0.396613661)
+  )
+
+history3 <- model %>% fit(
+  x = train_input,
+  y = train_output,
+  epochs = 200,
+  validation_split = 0.2,
+  callbacks = callback_early_stopping(patience = 20)
+)
+
+model <- keras_model_sequential() %>% 
+  layer_dense(input_shape = ncol(train_input), units = 1024, activation = "relu") %>% 
+  layer_dense(units = 1024, activation = "relu") %>% 
+  layer_dense(units = 1024, activation = "relu") %>% 
+  layer_dense(units = 1024, activation = "relu") %>% 
+  layer_dense(units = ncol(train_output))
+
+model %>% 
+  compile(
+    optimizer = optimizer_adam(),
+    loss = "mse",
+    metrics = list("mean_absolute_error"),
+    loss_weights = c(0.023177977, 0.328520427, 0.10806194, 0.143625994, 0.396613661)
+  )
+
+history4 <- model %>% fit(
+  x = train_input,
+  y = train_output,
+  epochs = 200,
+  validation_split = 0.2,
+  callbacks = callback_early_stopping(patience = 20)
+)
+```
+
+
+```{r}
+model <- keras_model_sequential() %>% 
+  layer_dense(input_shape = ncol(train_input), units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = ncol(train_output))
+
+model %>% 
+  compile(
+    optimizer = optimizer_adam(),
+    loss = "mse",
+    metrics = list("mean_absolute_error"),
+    loss_weights = c(0.023177977, 0.328520427, 0.10806194, 0.143625994, 0.396613661)
+  )
+
+history3 <- model %>% fit(
+  x = train_input,
+  y = train_output,
+  epochs = 200,
+  validation_split = 0.2,
+  callbacks = callback_early_stopping(patience = 20)
+)
+```
+
+
+### Multi-Headed Neural Network
+```{r,eval=FALSE}
+train_output2 <- train_ind %>% 
+  select(fight_pk, fighter, target_kd, target_sig_strike_landed, target_strike_landed, target_sub_attempts, target_td_landed) %>% 
+  left_join(df %>% select(fight_pk, fighter, res), by = c("fight_pk", "fighter")) %>% 
+  select(-fight_pk, -fighter) %>% 
+  mutate(res = if_else(res == "W", 1, 0)) %>% 
+  rename(target_res = res) %>% 
+  as.matrix()
+
+test_output2 <- test_ind %>% 
+  select(fight_pk, fighter, target_kd, target_sig_strike_landed, target_strike_landed, target_sub_attempts, target_td_landed) %>% 
+  left_join(df %>% select(fight_pk, fighter, res), by = c("fight_pk", "fighter")) %>% 
+  select(-fight_pk, -fighter) %>% 
+  mutate(res = if_else(res == "W", 1, 0)) %>% 
+  rename(target_res = res) %>%
+  as.matrix()
+
+fight_input <- layer_input(shape = ncol(train_input), dtype = "int32", name = "fights")
+
+base_model <- fight_input %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dropout(rate = 0.05) %>% 
+  layer_dense(units = 512, activation = "relu") 
+
+target_kd <- base_model %>% layer_dense(units = 1, name = "kd")
+target_sig_strike_landed <- base_model %>% layer_dense(units = 1, name = "sig_strike") 
+target_strike_landed <- base_model %>% layer_dense(units = 1, name = "strike")
+target_sub_attempts <- base_model %>% layer_dense(units = 1, name = "sub")
+target_td_landed <- base_model %>% layer_dense(units = 1, name = "td")
+target_res <- base_model %>% layer_dense(units = 1, name = "res", activation = "sigmoid")
+
+model2 <- keras_model(
+  fight_input,
+  list(target_kd, target_sig_strike_landed, target_strike_landed, target_sub_attempts, target_td_landed, target_res)
+)
+
+model2 %>% compile(
+  optimizer = optimizer_rmsprop(),
+  loss = list(kd = "mse", 
+              sig_strike = "mse", 
+              strike = "mse", 
+              sub = "mse", 
+              td = "mse", 
+              res = "binary_crossentropy"),
+  loss_weights = list(kd = 0.023177977, 
+                      sig_strike = 0.328520427, 
+                      strike = 0.10806194, 
+                      sub = 0.143625994, 
+                      td = 0.396613661, 
+                      res = .2)
+)
+
+model2 %>% 
+  fit(train_input, list(
+    kd = train_output2[, 1],
+    sig_strike = train_output2[, 2],
+    strike = train_output2[, 3],
+    sub = train_output2[, 4],
+    td = train_output2[, 5],
+    res = train_output2[, 6]
+  ),
+  epochs = 500,
+  validation_split = 0.2,
+  callbacks = callback_early_stopping(patience = 20),
+  batch_size = 128)
+```
+
+```{r}
+outcome_model <- workflow() %>% 
+  add_model(dif_xgboost) %>% 
+  add_recipe(dif_rec)
+
+kd_model <- workflow() %>% 
+  add_model(ind_xgboost) %>% 
+  add_recipe(kd_rec)
+
+strike_model <- workflow() %>% 
+  add_model(ind_xgboost) %>% 
+  add_recipe(strike_landed_rec)
+
+sig_strike_model <- workflow() %>% 
+  add_model(ind_xgboost) %>% 
+  add_recipe(sig_strike_landed_rec)
+
+td_model <- workflow() %>% 
+  add_model(ind_xgboost) %>% 
+  add_recipe(td_landed_rec)
+
+sub_model <- workflow() %>% 
+  add_model(ind_xgboost) %>% 
+  add_recipe(sub_attempts_rec)
+
+load(here("Data/outcome_tune.RDS"))
+```
+
+
+# Model Eval
+```{r}
+dif_tune %>% collect_metrics()
+
+dif_tune %>% autoplot()
+```
+
+
+```{r}
+dif_tune %>% show_best("roc_auc")
+dif_tune %>% show_best("accuracy")
+```
+
+```{r}
+dif_tune %>% 
+  collect_predictions() %>% 
+  inner_join(dif_tune %>% show_best("roc_auc", n = 1)) %>% 
+  conf_mat(truth = res, estimate = .pred_class)
+
+dif_tune %>% 
+  collect_predictions() %>% 
+  inner_join(dif_tune %>% show_best("accuracy", n = 1)) %>% 
+  conf_mat(truth = res, estimate = .pred_class)
+
+outcome_model <- outcome_model %>% finalize_workflow(dif_tune %>% show_best("accuracy", n = 1))
+```
+
+
+```{r}
+kd_tune %>% collect_metrics()
+strike_landed_tune %>% collect_metrics()
+sig_strike_landed_tune %>% collect_metrics()
+sub_attempts_tune %>% collect_metrics()
+td_landed_tune %>% collect_metrics()
+```
+
+
+```{r}
+kd_tune %>% show_best("rmse")
+strike_landed_tune %>% show_best("rmse")
+sig_strike_landed_tune %>% show_best("rmse")
+sub_attempts_tune %>% show_best("rmse")
+td_landed_tune %>% show_best("rmse")
+```
+
+```{r}
+kd_tune %>% autoplot()
+strike_landed_tune %>% autoplot()
+sig_strike_landed_tune %>% autoplot()
+sub_attempts_tune %>% autoplot()
+td_landed_tune %>% autoplot()
+```
+
+```{r}
+kd_model <- kd_model %>% 
+  finalize_workflow(kd_tune %>% show_best("rmse", n = 1))
+
+strike_model <- strike_model %>% 
+  finalize_workflow(strike_landed_tune %>% show_best("rmse", n = 1))
+
+sig_strike_model <- sig_strike_model %>% 
+  finalize_workflow(sig_strike_landed_tune %>% show_best("rmse", n = 1))
+
+sub_model <- sub_model %>% 
+  finalize_workflow(sub_attempts_tune %>% show_best("rmse", n = 1))
+
+td_model <- td_model %>% 
+  finalize_workflow(td_landed_tune %>% show_best("rmse", n = 1))
+
+```
+
+```{r}
+kd_eval <- kd_model %>% last_fit(ind_split)
+strike_eval <- strike_model %>% last_fit(ind_split)
+sig_strike_eval <- sig_strike_model %>% last_fit(ind_split)
+sub_eval <- sub_model %>% last_fit(ind_split)
+td_eval <- td_model %>% last_fit(ind_split)
+```
+
+```{r}
+kd_eval %>% collect_metrics()
+strike_eval %>% collect_metrics()
+sig_strike_eval %>% collect_metrics()
+sub_eval %>% collect_metrics()
+td_eval %>% collect_metrics()
+```
+
+```{r}
+sqrt(colMeans((predict(model, test_input) - test_output)^2))
+
+sqrt(colMeans((predict(model2, test_input) %>% 
+  as.data.frame() %>% 
+    rename(target_kd = 1, target_sig_strike_landed = 2, target_strike_landed = 3, 
+           target_sub_attempts = 4, target_td_landed = 5, target_res = 6) %>% 
+    as.matrix() - test_output2)^2))
+```
+
+```{r}
+outcome_model <- outcome_model %>% fit(model_dif_df)
+kd_model <- kd_model %>% fit(ind_comp_df)
+strike_model <- strike_model %>% fit(ind_comp_df)
+sig_strike_model <- sig_strike_model %>% fit(ind_comp_df)
+sub_model <- sub_model %>% fit(ind_comp_df)
+td_model <- td_model %>% fit(ind_comp_df)
+```
+
+```{r}
+save(outcome_model, kd_model, strike_model, sig_strike_model, sub_model, td_model, file = here("Models/ufc_models.RDS"))
+save(outcome_model, file = here("Models/outcome_model.RDS"))
+save(kd_model, file = here("Models/kd_model.RDS"))
+save(strike_model, file = here("Models/strike_model.RDS"))
+save(sig_strike_model, file = here("Models/sig_strike_model.RDS"))
+save(sub_model, file = here("Models/sub_model.RDS"))
+save(td_model, file = here("Models/td_model.RDS"))
+```
+
