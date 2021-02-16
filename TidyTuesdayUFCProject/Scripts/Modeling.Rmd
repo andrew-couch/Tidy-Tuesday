@@ -136,7 +136,6 @@ save(dif_tune, file = here("Data/outcome_tune.RDS"))
 ## Data Partition
 ```{r}
 set.seed(31)
-
 ind_split <- initial_split(ind_comp_df)
 train_ind <- training(ind_split)
 test_ind <- testing(ind_split)
@@ -259,6 +258,295 @@ save(td_landed_tune, file = here("Data/td_landed_tune.RDS"))
 ```
 
 
+### Regularize
+```{r}
+ind_lasso <- linear_reg(penalty = tune(), mixture = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+```
+
+```{r,eval=FALSE}
+kd_tune_lasso <- tune_sim_anneal(
+  ind_lasso,
+  kd_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(kd_tune_lasso, file = here("Data/kd_tune_lasso.RDS"))
+
+sig_strike_landed_tune_lasso <- tune_sim_anneal(
+  ind_lasso,
+  sig_strike_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(sig_strike_landed_tune_lasso, file = here("Data/sig_strike_landed_tune_lasso.RDS"))
+
+
+strike_landed_tune_lasso <- tune_sim_anneal(
+  ind_lasso,
+  strike_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(strike_landed_tune_lasso, file = here("Data/strike_landed_tune_lasso.RDS"))
+
+sub_attempts_tune_lasso <- tune_sim_anneal(
+  ind_lasso,
+  sub_attempts_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(sub_attempts_tune_lasso, file = here("Data/sub_attempts_tune_lasso.RDS"))
+
+td_landed_tune_lasso <- tune_sim_anneal(
+  ind_lasso,
+  td_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(td_landed_tune_lasso, file = here("Data/td_landed_tune_lasso.RDS"))
+```
+
+
+### PCA
+```{r}
+model_control <- control_sim_anneal(verbose = TRUE)
+
+pca_kd_rec <- recipe(target_kd ~ ., data = train_ind) %>% 
+  step_rm(fight_pk, fighter,
+          target_sig_strike_landed, target_strike_landed, 
+          target_sub_attempts, target_td_landed) %>% 
+  step_nzv(all_predictors(), -all_outcomes()) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_pca(all_predictors(), -all_outcomes(), threshold = .75) 
+
+pca_sig_strike_landed_rec <- recipe(target_sig_strike_landed ~ ., data = train_ind) %>% 
+  step_rm(fight_pk, fighter,
+          target_kd, target_strike_landed, 
+          target_sub_attempts, target_td_landed) %>% 
+  step_nzv(all_predictors(), -all_outcomes()) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_pca(all_predictors(), -all_outcomes(), threshold = .75) 
+
+pca_strike_landed_rec <- recipe(target_strike_landed ~ ., data = train_ind) %>% 
+  step_rm(fight_pk, fighter,
+          target_sig_strike_landed, target_kd, 
+          target_sub_attempts, target_td_landed) %>% 
+  step_nzv(all_predictors(), -all_outcomes()) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_pca(all_predictors(), -all_outcomes(), threshold = .75) 
+
+pca_sub_attempts_rec <- recipe(target_sub_attempts ~ ., data = train_ind) %>% 
+  step_rm(fight_pk, fighter,
+          target_sig_strike_landed, target_kd, target_strike_landed, target_td_landed) %>% 
+  step_nzv(all_predictors(), -all_outcomes()) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_pca(all_predictors(), -all_outcomes(), threshold = .75) 
+
+pca_td_landed_rec <- recipe(target_td_landed ~ ., data = train_ind) %>% 
+ step_rm(fight_pk, fighter,
+          target_sig_strike_landed, target_kd, target_strike_landed, 
+          target_sub_attempts) %>% 
+  step_nzv(all_predictors(), -all_outcomes()) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_pca(all_predictors(), -all_outcomes(), threshold = .75) 
+
+pca_kd_tune <- tune_sim_anneal(
+  ind_xgboost,
+  pca_kd_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(pca_kd_tune, file = here("Data/pca_kd_tune.RDS"))
+
+pca_sig_strike_landed_tune <- tune_sim_anneal(
+  ind_xgboost,
+  pca_sig_strike_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(pca_sig_strike_landed_tune, file = here("Data/pca_sig_strike_landed_tune.RDS"))
+
+
+pca_strike_landed_tune <- tune_sim_anneal(
+  ind_xgboost,
+  pca_strike_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(pca_strike_landed_tune, file = here("Data/pca_strike_landed_tune.RDS"))
+
+pca_sub_attempts_tune <- tune_sim_anneal(
+  ind_xgboost,
+  pca_sub_attempts_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(pca_sub_attempts_tune, file = here("Data/pca_sub_attempts_tune.RDS"))
+
+pca_td_landed_tune <- tune_sim_anneal(
+  ind_xgboost,
+  pca_td_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(pca_td_landed_tune, file = here("Data/pca_td_landed_tune.RDS"))
+```
+
+
+```{r}
+bind_rows(
+  workflow() %>% 
+    add_model(ind_lasso) %>% 
+    add_recipe(kd_rec) %>% 
+    finalize_workflow(show_best(kd_tune_lasso, "rmse", n = 1)) %>% 
+    fit(train_ind) %>% 
+    pull_workflow_fit() %>% 
+    tidy() %>% mutate(type = "kd"),
+  
+  workflow() %>% 
+    add_model(ind_lasso) %>% 
+    add_recipe(td_landed_rec) %>% 
+    finalize_workflow(show_best(td_landed_tune_lasso, "rmse", n = 1)) %>% 
+    fit(train_ind) %>% 
+    pull_workflow_fit() %>% 
+    tidy() %>% mutate(type = "td"),
+  
+  workflow() %>% 
+    add_model(ind_lasso) %>% 
+    add_recipe(sig_strike_landed_rec) %>% 
+    finalize_workflow(show_best(sig_strike_landed_tune_lasso, "rmse", n = 1)) %>% 
+    fit(train_ind) %>% 
+    pull_workflow_fit() %>% 
+    tidy() %>% mutate(type = "sig strike"),
+  
+  workflow() %>% 
+    add_model(ind_lasso) %>% 
+    add_recipe(strike_landed_rec) %>% 
+    finalize_workflow(show_best(strike_landed_tune_lasso, "rmse", n = 1)) %>% 
+    fit(train_ind) %>% 
+    pull_workflow_fit() %>% 
+    tidy() %>% mutate(type = "strike"),
+  
+  workflow() %>% 
+    add_model(ind_lasso) %>% 
+    add_recipe(sub_attempts_rec) %>% 
+    finalize_workflow(show_best(sub_attempts_tune_lasso, "rmse", n = 1)) %>% 
+    fit(train_ind) %>% 
+    pull_workflow_fit() %>% 
+    tidy() %>% mutate(type = "sub")
+) %>% filter(estimate != 0) %>% 
+  count(type, sort = TRUE)
+```
+
+
+
+
+### RandomForest
+```{r}
+ind_randomForest <- rand_forest(trees = tune(), min_n = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger")
+```
+
+```{r,eval=FALSE}
+kd_tune_rf <- tune_sim_anneal(
+  ind_randomForest,
+  kd_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(kd_tune_rf, file = here("Data/kd_tune_rf.RDS"))
+
+sig_strike_landed_tune_rf <- tune_sim_anneal(
+  ind_randomForest,
+  sig_strike_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(sig_strike_landed_tune_rf, file = here("Data/sig_strike_landed_tune_rf.RDS"))
+
+
+strike_landed_tune_rf <- tune_sim_anneal(
+  ind_randomForest,
+  strike_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(strike_landed_tune_rf, file = here("Data/strike_landed_tune_rf.RDS"))
+
+sub_attempts_tune_rf <- tune_sim_anneal(
+  ind_randomForest,
+  sub_attempts_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(sub_attempts_tune_rf, file = here("Data/sub_attempts_tune_rf.RDS"))
+
+td_landed_tune_rf <- tune_sim_anneal(
+  ind_randomForest,
+  td_landed_rec,
+  metrics = ind_metrics,
+  iter = 5,
+  control = model_control,
+  resamples = k_folds_ind
+)
+
+save(td_landed_tune_rf, file = here("Data/td_landed_tune_rf.RDS"))
+```
 
 ### Neural Network
 ```{r}

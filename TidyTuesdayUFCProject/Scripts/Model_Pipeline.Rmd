@@ -1,0 +1,269 @@
+---
+title: "Model Pipeline"
+author: "Andrew Couch"
+date: "2/13/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(here)
+
+df <- read_csv(here("Data/fight_data.csv"))
+match_df <- read_csv(here("Data/fights.csv"))
+fighter_df <- read_csv(here("Data/fighter_table.csv"))
+
+load(here("Models/kd_model.RDS"))
+load(here("Models/sig_strike_model.RDS"))
+load(here("Models/strike_model.RDS"))
+load(here("Models/sub_model.RDS"))
+load(here("Models/td_model.RDS"))
+load(here("Models/outcome_model.RDS"))
+```
+
+```{r}
+sample_df <- fighter_df %>% 
+  filter(fight_pk == 5931, fighter == "Conor McGregor") %>% 
+  inner_join(fighter_df %>% 
+  filter(fight_pk == 5931, fighter != "Conor McGregor") %>% 
+  rename_all(.funs = ~paste0("opp_", .x)),
+  by = c("fight_pk" = "opp_fight_pk"))
+```
+
+```{r}
+feature_df <- fighter_df %>% 
+  left_join(fighter_df %>% rename_all(.funs = ~paste0("opp_", .x)),
+            by = c("fight_pk" = "opp_fight_pk")) %>% 
+  filter(fighter != opp_fighter) %>% 
+  arrange(desc(fight_pk)) %>% 
+  inner_join(df %>% 
+  select(fight_pk, fighter, round_finished,
+         kd, sig_strike_attempts, sig_strike_landed,
+         strike_attempts, strike_landed,
+         sub_attempts, td_attempts, td_landed) %>% 
+  rename_at(vars(!matches("fight_pk|fighter")), ~paste0("target_", .x)) %>% 
+  mutate(across(-c(fight_pk, fighter, target_round_finished), .fns = ~.x / target_round_finished)) %>% 
+  select(-target_round_finished, -target_strike_attempts, -target_sig_strike_attempts, -target_td_attempts),
+  by = c("fight_pk", "fighter")) %>% 
+  select_at(vars(fight_pk, fighter, contains("target"), everything()))
+```
+
+```{r}
+kd_rec <- recipe(target_kd ~ ., 
+                 data = feature_df %>% select(-target_sig_strike_landed, -target_strike_landed, -target_sub_attempts, -target_td_landed)) %>% 
+  step_mutate(is_favored = if_else(elo > opp_elo, "favored", "not_favored"),
+              elo_dif = elo - opp_elo,
+              fight_dif = num_fights - opp_num_fights,
+              elo_prob = 1 / (1 + 10^((opp_elo - elo)/400)),
+              strike_metric = log((avg_strike_landed + 1 / (avg_strikes_received + 2)))*`win_ko/tko`,
+              opp_strike_metric = log((opp_avg_strike_landed + 1 / (opp_avg_strikes_received + 2)))*`opp_win_ko/tko`,
+              strike_dif = strike_metric - opp_strike_metric,
+              strike_favor = if_else(strike_metric > opp_strike_metric, "favored", "unfavored"),
+              submission_metric = log((avg_td_landed * (win_submission + 1)) + 1) + 
+                log((avg_tds_defended + 1) / (loss_submission + 2)),
+              opp_submission_metric = log((opp_avg_td_landed * (opp_win_submission + 1)) + 1) + 
+                log((opp_avg_tds_defended + 1) / (opp_loss_submission + 2)),
+              sub_dif = submission_metric - opp_submission_metric,
+              sub_favor = if_else(submission_metric > opp_submission_metric, "favored", "unfavored"),
+              sub_favor = as.factor(sub_favor),
+              is_favored = as.factor(is_favored),
+              strike_favor = as.factor(strike_favor)) %>% 
+  step_rm(contains("fight_pk"), contains("fighter"), contains("rev"), contains("weight_class"), 
+          contains("res"), contains("win"), contains("loss")) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+
+sig_strike_landed_rec <- recipe(target_sig_strike_landed ~ ., 
+                 data = feature_df %>% 
+                   select(-target_kd, -target_strike_landed, -target_sub_attempts, -target_td_landed)) %>% 
+  step_mutate(is_favored = if_else(elo > opp_elo, "favored", "not_favored"),
+              elo_dif = elo - opp_elo,
+              fight_dif = num_fights - opp_num_fights,
+              elo_prob = 1 / (1 + 10^((opp_elo - elo)/400)),
+              strike_metric = log((avg_strike_landed + 1 / (avg_strikes_received + 2)))*`win_ko/tko`,
+              opp_strike_metric = log((opp_avg_strike_landed + 1 / (opp_avg_strikes_received + 2)))*`opp_win_ko/tko`,
+              strike_dif = strike_metric - opp_strike_metric,
+              strike_favor = if_else(strike_metric > opp_strike_metric, "favored", "unfavored"),
+              submission_metric = log((avg_td_landed * (win_submission + 1)) + 1) + 
+                log((avg_tds_defended + 1) / (loss_submission + 2)),
+              opp_submission_metric = log((opp_avg_td_landed * (opp_win_submission + 1)) + 1) + 
+                log((opp_avg_tds_defended + 1) / (opp_loss_submission + 2)),
+              sub_dif = submission_metric - opp_submission_metric,
+              sub_favor = if_else(submission_metric > opp_submission_metric, "favored", "unfavored"),
+              sub_favor = as.factor(sub_favor),
+              is_favored = as.factor(is_favored),
+              strike_favor = as.factor(strike_favor)) %>% 
+  step_rm(contains("fight_pk"), contains("fighter"), contains("rev"), contains("weight_class"), 
+          contains("res"), contains("win"), contains("loss")) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+
+
+strike_landed_rec <- recipe(target_strike_landed ~ ., 
+                 data = feature_df %>% 
+                   select(-target_kd, -target_sig_strike_landed, -target_sub_attempts, -target_td_landed)) %>% 
+  step_mutate(is_favored = if_else(elo > opp_elo, "favored", "not_favored"),
+              elo_dif = elo - opp_elo,
+              fight_dif = num_fights - opp_num_fights,
+              elo_prob = 1 / (1 + 10^((opp_elo - elo)/400)),
+              strike_metric = log((avg_strike_landed + 1 / (avg_strikes_received + 2)))*`win_ko/tko`,
+              opp_strike_metric = log((opp_avg_strike_landed + 1 / (opp_avg_strikes_received + 2)))*`opp_win_ko/tko`,
+              strike_dif = strike_metric - opp_strike_metric,
+              strike_favor = if_else(strike_metric > opp_strike_metric, "favored", "unfavored"),
+              submission_metric = log((avg_td_landed * (win_submission + 1)) + 1) + 
+                log((avg_tds_defended + 1) / (loss_submission + 2)),
+              opp_submission_metric = log((opp_avg_td_landed * (opp_win_submission + 1)) + 1) + 
+                log((opp_avg_tds_defended + 1) / (opp_loss_submission + 2)),
+              sub_dif = submission_metric - opp_submission_metric,
+              sub_favor = if_else(submission_metric > opp_submission_metric, "favored", "unfavored"),
+              sub_favor = as.factor(sub_favor),
+              is_favored = as.factor(is_favored),
+              strike_favor = as.factor(strike_favor)) %>% 
+  step_rm(contains("fight_pk"), contains("fighter"), contains("rev"), contains("weight_class"), 
+          contains("res"), contains("win"), contains("loss")) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+sub_attempts_rec <- recipe(target_sub_attempts ~ ., 
+                 data = feature_df %>% 
+                   select(-target_kd, -target_sig_strike_landed, -target_strike_landed, -target_td_landed)) %>% 
+  step_mutate(is_favored = if_else(elo > opp_elo, "favored", "not_favored"),
+              elo_dif = elo - opp_elo,
+              fight_dif = num_fights - opp_num_fights,
+              elo_prob = 1 / (1 + 10^((opp_elo - elo)/400)),
+              strike_metric = log((avg_strike_landed + 1 / (avg_strikes_received + 2)))*`win_ko/tko`,
+              opp_strike_metric = log((opp_avg_strike_landed + 1 / (opp_avg_strikes_received + 2)))*`opp_win_ko/tko`,
+              strike_dif = strike_metric - opp_strike_metric,
+              strike_favor = if_else(strike_metric > opp_strike_metric, "favored", "unfavored"),
+              submission_metric = log((avg_td_landed * (win_submission + 1)) + 1) + 
+                log((avg_tds_defended + 1) / (loss_submission + 2)),
+              opp_submission_metric = log((opp_avg_td_landed * (opp_win_submission + 1)) + 1) + 
+                log((opp_avg_tds_defended + 1) / (opp_loss_submission + 2)),
+              sub_dif = submission_metric - opp_submission_metric,
+              sub_favor = if_else(submission_metric > opp_submission_metric, "favored", "unfavored"),
+              sub_favor = as.factor(sub_favor),
+              is_favored = as.factor(is_favored),
+              strike_favor = as.factor(strike_favor)) %>% 
+  step_rm(contains("fight_pk"), contains("fighter"), contains("rev"), contains("weight_class"), 
+          contains("res"), contains("win"), contains("loss")) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+td_landed_rec <- recipe(target_td_landed ~ ., 
+                 data = feature_df %>% 
+                   select(-target_kd, -target_sig_strike_landed, -target_strike_landed, -target_sub_attempts)) %>% 
+  step_mutate(is_favored = if_else(elo > opp_elo, "favored", "not_favored"),
+              elo_dif = elo - opp_elo,
+              fight_dif = num_fights - opp_num_fights,
+              elo_prob = 1 / (1 + 10^((opp_elo - elo)/400)),
+              strike_metric = log((avg_strike_landed + 1 / (avg_strikes_received + 2)))*`win_ko/tko`,
+              opp_strike_metric = log((opp_avg_strike_landed + 1 / (opp_avg_strikes_received + 2)))*`opp_win_ko/tko`,
+              strike_dif = strike_metric - opp_strike_metric,
+              strike_favor = if_else(strike_metric > opp_strike_metric, "favored", "unfavored"),
+              submission_metric = log((avg_td_landed * (win_submission + 1)) + 1) + 
+                log((avg_tds_defended + 1) / (loss_submission + 2)),
+              opp_submission_metric = log((opp_avg_td_landed * (opp_win_submission + 1)) + 1) + 
+                log((opp_avg_tds_defended + 1) / (opp_loss_submission + 2)),
+              sub_dif = submission_metric - opp_submission_metric,
+              sub_favor = if_else(submission_metric > opp_submission_metric, "favored", "unfavored"),
+              sub_favor = as.factor(sub_favor),
+              is_favored = as.factor(is_favored),
+              strike_favor = as.factor(strike_favor)) %>% 
+  step_rm(contains("fight_pk"), contains("fighter"), contains("rev"), contains("weight_class"), 
+          contains("res"), contains("win"), contains("loss")) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+
+```
+
+
+```{r}
+kd_model <- kd_model %>% 
+  remove_recipe() %>% 
+  add_recipe(kd_rec) %>% 
+  fit(feature_df)
+
+sig_strike_model <- sig_strike_model %>% 
+  remove_recipe() %>% 
+  add_recipe(sig_strike_landed_rec) %>% 
+  fit(feature_df)
+
+strike_model <- strike_model %>% 
+  remove_recipe() %>% 
+  add_recipe(strike_landed_rec) %>% 
+  fit(feature_df)
+
+td_model <- td_model %>% 
+  remove_recipe() %>% 
+  add_recipe(td_landed_rec) %>% 
+  fit(feature_df)
+
+sub_model <- sub_model %>% 
+  remove_recipe() %>% 
+  add_recipe(sub_attempts_rec) %>% 
+  fit(feature_df)
+```
+
+```{r}
+outcome_df <- df %>% select(fight_pk, fighter, res, kd, sig_strike_landed, strike_landed, sub_attempts, td_landed) %>% 
+  left_join(df %>% select(fight_pk, fighter, kd, sig_strike_landed, strike_landed, sub_attempts, td_landed) %>% 
+              rename_all(~paste0("opp_", .x)),
+            by = c("fight_pk" = "opp_fight_pk")) %>% 
+  filter(fighter != opp_fighter) %>% 
+  group_by(fight_pk) %>% 
+  sample_n(1) %>% 
+  ungroup() %>% 
+  select(-fight_pk, -fighter, -opp_fighter) %>% 
+  mutate(res = if_else(res == "W", "W", "L"),
+         res = as.factor(res))
+```
+
+
+```{r}
+outcome_rec <- recipe(res~., data = outcome_df) %>% 
+  step_mutate(kd_dif = kd - opp_kd,
+              sig_strike_dif = sig_strike_landed - opp_sig_strike_landed,
+              strike_dif = strike_landed - opp_strike_landed,
+              sub_dif = sub_attempts - opp_sub_attempts,
+              td_dif = td_landed - opp_td_landed,
+              
+              kd_advantage = if_else(kd > opp_kd, 1, 0),
+              sig_strike_advantage = if_else(sig_strike_landed > opp_sig_strike_landed, 1, 0),
+              strike_advantage = if_else(strike_landed > opp_strike_landed, 1, 0),
+              sub_advantage = if_else(sub_attempts > opp_sub_attempts, 1, 0),
+              td_advantage = if_else(td_landed > opp_td_landed, 1, 0),
+              
+              component_dif = kd_advantage + sig_strike_advantage + strike_advantage + sub_advantage + td_advantage
+              ) %>% 
+  step_rm(!contains("dif"), -all_outcomes()) %>% 
+  step_YeoJohnson(all_predictors()) 
+```
+
+```{r}
+outcome_model <- outcome_model %>% 
+  remove_recipe() %>% 
+  add_recipe(outcome_rec) %>% 
+  fit(outcome_df)
+```
+
+```{r}
+save(kd_model, file = here("Models/kd_model.RDS"))
+save(sig_strike_model, file = here("Models/sig_strike_model.RDS"))
+save(strike_model, file = here("Models/strike_model.RDS"))
+save(td_model, file = here("Models/sub_model.RDS"))
+save(sub_model, file = here("Models/td_model.RDS"))
+save(outcome_model, file = here("Models/outcome_model.RDS"))
+```
