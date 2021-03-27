@@ -1,0 +1,195 @@
+---
+title: "TidyTuesday Dimensionality Reduction"
+author: "Andrew Couch"
+date: "3/27/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Video: https://youtu.be/1AKug0tgux8
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(recipeselectors)
+library(vip)
+library(here)
+
+df <- read_csv(here("Data/fight_data.csv"))
+match_df <- read_csv(here("Data/fights.csv"))
+fighter_df <- read_csv(here("Data/fighter_table.csv"))
+```
+
+
+
+```{r}
+# Create model data for predicting strikes landed
+model_data <- fighter_df %>% 
+  select(-res, -round_finished) %>% 
+  rename_at(vars(-c(fight_pk, fighter, weight_class)), .funs = ~paste0("fighter_", .x)) %>% 
+  left_join(fighter_df %>% 
+              select(-weight_class, -res, -round_finished) %>% 
+              rename_at(vars(-c(fight_pk, fighter)), .funs = ~paste0("opponent_", .x)) %>% 
+              rename(opponent = fighter),
+            by = "fight_pk") %>% 
+  filter(fighter != opponent) %>% 
+  arrange(desc(fight_pk)) %>% 
+  left_join(df %>% select(fight_pk, fighter, target_strike_landed = strike_landed) ,
+            by = c("fighter", "fight_pk")) 
+
+model_data %>% 
+  select(fight_pk, fighter, opponent, fighter_avg_kd, opponent_avg_kd)
+```
+
+
+```{r}
+# Randomly sample from each fight
+set.seed(42)
+
+model_data <- model_data %>% 
+  group_by(fight_pk) %>% 
+  slice_sample(n = 1) %>% 
+  ungroup() %>% 
+  select(-fighter, -opponent, -fight_pk)
+```
+
+
+```{r}
+# Check columns 
+model_data %>% ncol()
+```
+
+
+```{r}
+# Create train and test splits
+set.seed(52)
+tidy_split <- initial_split(model_data, strata = weight_class)
+train_data <- training(tidy_split)
+test_data <- testing(tidy_split)
+```
+
+```{r}
+# Count columns with no dimension reduction
+base_rec <- recipe(target_strike_landed~., data = train_data) %>% 
+  step_dummy(all_nominal(), one_hot = TRUE) 
+
+base_rec %>% prep() %>% juice()
+```
+
+
+```{r}
+# Basic dimension reduction
+basic_dim_rec <- recipe(target_strike_landed~., data = train_data) %>% 
+  step_meanimpute(all_numeric(), -all_outcomes()) %>% 
+  step_nzv(all_numeric(), -all_outcomes()) %>% 
+  step_lincomb(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal()) 
+
+basic_dim_rec %>% prep() %>% juice() %>% ncol()
+```
+
+```{r}
+# Including correlation filter removes even more 
+full_dim_rec <- recipe(target_strike_landed~., data = train_data) %>% 
+  step_meanimpute(all_numeric(), -all_outcomes()) %>% 
+  step_nzv(all_numeric(), -all_outcomes()) %>% 
+  step_lincomb(all_numeric(), -all_outcomes()) %>% 
+  step_corr(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal()) 
+
+full_dim_rec %>% prep() %>% juice() %>% ncol()
+```
+
+```{r}
+recipe(target_strike_landed~., data = train_data) %>% 
+  step_meanimpute(all_numeric(), -all_outcomes()) %>% 
+  prep() %>% 
+  juice() %>% 
+  select(-weight_class, -target_strike_landed) %>% 
+  cor() %>% 
+  as_tibble(rownames = "features") %>% 
+  pivot_longer(-features) %>% 
+  filter(features > name) %>% 
+  drop_na() %>% 
+  arrange(desc(abs(value))) 
+```
+
+```{r}
+recipe(target_strike_landed~., data = train_data) %>% 
+  step_meanimpute(all_numeric(), -all_outcomes()) %>% 
+  prep() %>% 
+  juice() %>% 
+  select(-weight_class, -target_strike_landed) %>% 
+  cor() %>% 
+  as_tibble(rownames = "features") %>% 
+  pivot_longer(-features) %>% 
+  filter(features > name) %>% 
+  drop_na() %>% 
+  ggplot(aes(x = value)) + 
+  geom_histogram(color = "white") + 
+  scale_x_continuous(labels = scales::label_percent())
+```
+
+```{r}
+# Try PCA
+pca_rec <- recipe(target_strike_landed~., data = train_data) %>% 
+  step_meanimpute(all_numeric(), -all_outcomes()) %>% 
+  step_nzv(all_numeric(), -all_outcomes()) %>% 
+  step_center(all_numeric(), -all_outcomes()) %>% 
+  step_scale(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), one_hot = TRUE) %>% 
+  step_pca(all_predictors(), threshold = .75)
+
+pca_rec %>% prep() %>% juice() %>% ncol()
+```
+
+
+```{r}
+# Choosing tree-based models that handle correlated features and high-dimensionality
+simple_tree_model <- decision_tree(tree_depth = tune(), min_n = tune(), cost_complexity = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("rpart")
+
+randomForest_model <- rand_forest(min_n = tune(), trees = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger")
+
+xgboost_model <- boost_tree(trees = tune(), tree_depth = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("xgboost")
+```
+
+
+
+```{r}
+# Manually inspect VIP and use intuition to choose features
+vip_model <- rand_forest(trees = 500) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  fit(target_strike_landed~., data = base_rec %>% prep() %>% juice())
+
+vip(vip_model)
+
+vi(vip_model) %>% 
+  filter(Importance > 0)
+```
+
+
+
+```{r}
+# Use recursive feature elimination
+rfe_model <- rand_forest(mode = "regression") %>% set_engine("ranger", importance = "permutation")
+
+rfe_rec <- recipe(target_strike_landed~., data = train_data) %>% 
+  step_dummy(all_nominal(), one_hot = TRUE) %>% 
+  step_medianimpute(all_numeric(), -all_outcomes()) %>% 
+  step_select_vip(all_predictors(), outcome = "target_strike_landed", model = rfe_model, threshold = 0.9)
+
+rfe_rec %>% 
+  prep() %>% 
+  juice()
+```
+
