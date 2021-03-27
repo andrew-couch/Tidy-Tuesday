@@ -1,0 +1,176 @@
+---
+title: "TidyTuesdayRegressionPreProcessing"
+author: "Andrew Couch"
+date: "8/31/2020"
+output: html_document
+---
+
+Video: https://www.youtube.com/watch?v=i4If7kF2xt4&list=PLJfshcspBCYeJeO8YFT5e5HxuYOb5a_1W&index=27
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(AmesHousing)
+
+df <- make_ames()
+df %>% summary()
+```
+
+```{r}
+set.seed(31)
+
+tidy_split <- initial_split(df, prop = .8)
+train_data <- training(tidy_split)
+test_data <- testing(tidy_split)
+
+k_folds_data <- vfold_cv(train_data)
+
+```
+
+
+```{r}
+# Define a pre-procesing method where we will tune correlation threshold, number of pca components, and lumping threshold
+tidy_rec <- recipe(Sale_Price~., data = train_data) %>% 
+  step_corr(all_numeric(), -all_outcomes(), threshold = tune("num_thresh")) %>% 
+  step_nzv(all_numeric(), -all_outcomes()) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+  step_pca(all_numeric(), -all_outcomes(), num_comp = tune()) %>% 
+  step_other(all_nominal(), threshold = tune("cat_thresh")) %>% 
+  step_dummy(all_nominal())
+```
+
+```{r}
+# Define a model
+linear_model <- linear_reg(penalty = tune(), mixture = 1) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+model_metrics <- metric_set(rmse, rsq, rsq_trad, mae)
+```
+
+```{r}
+# Create tuning grid for model and pre-processing methods 
+
+model_grid <- grid_regular(parameters(linear_model), levels = 5)
+
+rec_grid <- grid_regular(parameters(tidy_rec), levels = 5, filter = c(num_thresh > .7 & cat_thresh > .01))
+
+# Combine the model and pre-processing parameters into a single grid 
+model_rec_grid <- merge(model_grid, rec_grid)
+```
+
+
+```{r}
+# Tune the lasso model
+
+model_res <- tune_grid(linear_model,
+                       preprocessor = tidy_rec,
+                       resamples = k_folds_data,
+                       grid = model_rec_grid,
+                       metrics = model_metrics
+)
+
+```
+
+```{r}
+model_res %>% 
+  collect_metrics() %>% 
+  group_by(.metric) %>% 
+  summarise(min = min(mean),
+            median = median(mean),
+            mean = mean(mean),
+            max = max(mean))
+```
+
+```{r}
+model_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  pivot_longer(num_thresh:cat_thresh) %>% 
+  filter(.metric == "mae") %>% 
+  ggplot(aes(x = value, y = .estimate)) + 
+  geom_point() + 
+  geom_smooth() + 
+  facet_wrap(~name, scales = "free")
+```
+
+
+```{r}
+# Select parameters with the best metrics 
+model_tune <- model_res %>% select_best("mae")
+```
+
+
+```{r}
+# Apply parameters to the model
+linear_model <-  finalize_model(linear_model, model_tune)
+
+tidy_rec <- finalize_recipe(tidy_rec, model_tune)
+
+```
+
+
+```{r}
+# Finalize model workflow
+pricing_model <- workflow() %>% 
+  add_model(linear_model) %>% 
+  add_recipe(tidy_rec)
+
+# Train model on train set and evaluate on test set 
+pricing_model_fit <- last_fit(pricing_model, tidy_split)
+
+# Calculate test set's MAE
+pricing_model_fit %>% 
+  collect_predictions() %>% 
+  mae(.pred, Sale_Price)
+```
+
+```{r}
+# View our model predicitons 
+pricing_model_fit %>% 
+  collect_predictions() %>% 
+  ggplot(aes(x = .pred, y = Sale_Price)) + 
+  geom_point() + 
+  geom_smooth() + 
+  geom_abline(slope = 1, intercept = 0)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

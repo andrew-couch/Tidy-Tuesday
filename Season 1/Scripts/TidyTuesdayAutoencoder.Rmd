@@ -1,0 +1,240 @@
+---
+title: "TidyTuesdayAutoencoder"
+author: "Andrew Couch"
+date: "11/3/2020"
+output: html_document
+---
+
+Video: https://www.youtube.com/watch?v=oDhpIDBQSzw&list=PLJfshcspBCYeJeO8YFT5e5HxuYOb5a_1W&index=18&t=21s
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(keras)
+```
+
+```{r}
+#https://www.kaggle.com/mlg-ulb/creditcardfraud
+df <- read_csv("creditcard.csv")
+```
+
+```{r}
+df %>% summary()
+df <- df %>% mutate(Class = if_else(Class == 1, "Fraud", "No_Fraud") %>% as.factor()) %>% select(-Time) 
+```
+
+```{r}
+set.seed(42)
+tidy_split <- initial_split(df, strata = Class)
+train_data <- training(tidy_split)
+test_data <- testing(tidy_split)
+```
+
+```{r}
+tidy_rec <- recipe(Class~., data = train_data) %>% 
+  step_range(all_predictors())
+
+train_data <- tidy_rec %>% prep() %>% bake(train_data)
+test_data <- tidy_rec %>% prep() %>% bake(test_data)
+```
+
+
+```{r}
+fraud_df <- train_data %>% filter(Class == "Fraud") %>% select(-Class) %>% as.matrix()
+non_fraud_df <- train_data %>% filter(Class != "Fraud") %>% select(-Class) %>% as.matrix()
+```
+
+```{r}
+autoencoder <- keras_model_sequential()
+
+autoencoder %>% 
+  layer_dense(units = 15, activation = "relu", input_shape = ncol(non_fraud_df)) %>% 
+  layer_dense(units = 5, activation = "relu") %>% 
+  layer_dense(units = 15, activation = "relu") %>% 
+  layer_dense(units = ncol(non_fraud_df))
+
+
+autoencoder %>% compile(
+    loss = "mean_squared_error",
+    optimizer = "adam"
+  )
+
+```
+
+```{r}
+autoencoder_hist <- autoencoder %>% fit(
+  x = non_fraud_df,
+  y = non_fraud_df,
+  epochs = 100,
+  batch_size = 32,
+  validation_split = .8,
+  options = callback_early_stopping(patience = 10)
+)
+```
+
+
+```{r}
+non_fraud_pred <- predict(autoencoder, non_fraud_df)
+fraud_pred <- predict(autoencoder, fraud_df)
+```
+
+```{r}
+tibble(total_sq_err = rowSums((non_fraud_pred - non_fraud_df)^2)) %>% summary()
+tibble(total_sq_err = rowSums((fraud_pred - fraud_df)^2)) %>% summary()
+```
+
+
+```{r}
+model_data <- tibble(error = rowSums((predict(autoencoder, train_data %>% select(-Class) %>% as.matrix()) - train_data %>% select(-Class) %>% as.matrix())^2)) %>% 
+  bind_cols(train_data %>% select(Class))
+
+model_data %>% group_by(Class) %>% summarise(mean = mean(error))
+
+anom_model <- logistic_reg(penalty = 0, mixture = 0) %>% 
+  fit(Class~error, data = model_data)
+
+predict(anom_model, model_data) %>% 
+  bind_cols(model_data %>% select(Class)) %>% 
+  conf_mat(truth = Class, estimate = .pred_class)
+
+baseline_model <- logistic_reg(penalty = 0, mixture = 0) %>% 
+  fit(Class~., data = train_data)
+
+predict(baseline_model, train_data) %>% 
+  bind_cols(train_data %>% select(Class)) %>% 
+  conf_mat(truth = Class, estimate = .pred_class)
+```
+
+
+
+```{r}
+eval_set <- tibble(error = rowSums((predict(autoencoder, test_data %>% select(-Class) %>% as.matrix()) - test_data %>% select(-Class) %>% as.matrix())^2)) %>% 
+  bind_cols(test_data %>% select(Class))
+```
+
+
+
+
+```{r}
+predict(anom_model, eval_set) %>% 
+  bind_cols(eval_set %>% select(Class)) %>% 
+  conf_mat(truth = Class, estimate = .pred_class)
+
+predict(baseline_model, test_data) %>% 
+  bind_cols(test_data %>% select(Class)) %>% 
+  conf_mat(truth = Class, estimate = .pred_class)
+
+```
+
+```{r}
+mnist_df <- keras::dataset_mnist()
+
+train_x <- mnist_df$train$x
+train_y <- mnist_df$train$y
+
+test_x <- mnist_df$test$x
+test_y <- mnist_df$test$y
+```
+
+
+```{r}
+train_x <- (train_x / 255)
+test_x <- (test_x / 255)
+
+train_x <- array_reshape(train_x, c(nrow(train_x), 28*28))
+test_x <- array_reshape(test_x, c(nrow(test_x), 28*28))
+```
+
+```{r}
+image_encoder <- keras_model_sequential()
+
+image_encoder %>% 
+  layer_dense(units = 512, activation = "relu", input_shape = ncol(train_x)) %>% 
+  layer_dense(units = 256, activation = "relu") %>% 
+  layer_dense(units = 8, activation = "relu", name = "embedding") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = 256, activation = "relu") %>% 
+  layer_dense(units = ncol(train_x))
+
+image_encoder %>% compile(
+  loss = "mean_squared_error",
+  optimizer = "adam"
+)
+
+summary(image_encoder)
+```
+
+```{r}
+
+image_history <- image_encoder %>% fit(
+  x = train_x,
+  y = train_x,
+  epochs = 50,
+  batch_size = 128,
+  validation_split = .8,
+  callbacks = callback_early_stopping(patience = 5)
+)
+
+```
+
+
+```{r}
+image_encoder
+
+embeddings_model <- keras_model(inputs = image_encoder$input,
+                                outputs = get_layer(image_encoder, "embedding")$output)
+
+embeddings_model
+```
+
+
+```{r}
+image_model_data <- predict(embeddings_model, train_x) %>% 
+  as_tibble() %>% 
+  bind_cols(tibble(labels = train_y)) %>% 
+  mutate(labels = as.factor(labels))
+```
+
+
+```{r}
+
+image_model <- multinom_reg(mode = "classification", penalty = 0, mixture = 0) %>% 
+  fit(labels~., data = image_model_data)
+
+
+eval_image <- predict(embeddings_model, test_x)
+
+predict(image_model, eval_image %>% as_tibble()) %>% 
+  bind_cols(tibble("labels" = test_y)) %>% 
+  mutate(labels = as.factor(labels)) %>% 
+  conf_mat(truth = labels, estimate = .pred_class)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

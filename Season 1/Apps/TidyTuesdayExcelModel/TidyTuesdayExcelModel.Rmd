@@ -1,0 +1,150 @@
+---
+title: "TidyTuesdayExcelModels"
+author: "Andrew Couch"
+date: "9/15/2020"
+output: html_document
+---
+
+Video: https://www.youtube.com/watch?v=CXZ-VMaPcNQ&list=PLJfshcspBCYeJeO8YFT5e5HxuYOb5a_1W&index=25
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(palmerpenguins)
+
+df <- penguins
+
+df %>% count(species)
+
+df %>% summary()
+df <- drop_na(df)
+```
+
+# Create train and test sets
+```{r}
+set.seed(15)
+tidy_split <- initial_split(df, prop = .8, strata = species)
+train_data <- training(tidy_split)
+test_data <- testing(tidy_split)
+kfolds_data <- vfold_cv(train_data)
+```
+
+# Pre-processing
+```{r}
+
+tidy_rec <- recipe(species~., data = train_data) %>% 
+  step_normalize(all_numeric()) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) 
+  #step_downsample(species) Can account for class imbalance if you want
+
+```
+
+
+# Models
+```{r}
+
+xgboost_model <- boost_tree(trees = tune(), tree_depth = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost")
+
+logistic_model <- multinom_reg(penalty = tune(), mixture = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("glmnet")
+
+```
+
+# Create tune grids
+```{r}
+
+xgboost_grid <- grid_regular(parameters(xgboost_model), levels = 3)
+logistic_grid <- grid_regular(parameters(logistic_model), levels = 5)
+
+model_metrics <- metric_set(accuracy, roc_auc, mn_log_loss)
+```
+
+# Tune models
+```{r}
+
+xgboost_res <- tune_grid(
+  xgboost_model,
+  tidy_rec,
+  grid = xgboost_grid,
+  resamples = kfolds_data,
+  metrics = model_metrics
+)
+
+logistic_res <- tune_grid(
+  logistic_model,
+  tidy_rec,
+  grid = logistic_grid,
+  resamples = kfolds_data,
+  metrics = model_metrics
+)
+
+
+```
+
+
+# Evaluate Models
+```{r}
+xgboost_res %>% collect_metrics(summarize = FALSE) %>% mutate(model = "xgboost") %>% 
+  bind_rows(logistic_res %>% collect_metrics(summarize = FALSE) %>% mutate(model = "logistic")) %>% 
+  ggplot(aes(x = model, y = .estimate)) + 
+  geom_boxplot() + 
+  facet_wrap(~.metric, scales = "free")
+
+
+```
+
+# Create our final model 
+```{r}
+
+xgboost_model <- finalize_model(xgboost_model, xgboost_res %>% show_best("roc_auc") %>% slice(2))
+
+final_model <- workflow() %>% 
+  add_model(xgboost_model) %>% 
+  add_recipe(tidy_rec)
+
+# Very good results
+last_fit(final_model, tidy_split) %>% collect_metrics()
+```
+
+
+
+```{r}
+final_model <- final_model %>% fit(df)
+
+saveRDS(final_model, "excelmodel.rds")
+write_csv(penguins, "penguins.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

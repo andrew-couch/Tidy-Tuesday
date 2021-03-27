@@ -1,0 +1,197 @@
+---
+title: "TidyTuesdayNNetRegularization"
+author: "Andrew Couch"
+date: "11/8/2020"
+output: html_document
+---
+
+Video: https://www.youtube.com/watch?v=rn8HrlHICfE&list=PLJfshcspBCYeJeO8YFT5e5HxuYOb5a_1W&index=16&t=1s
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(keras)
+
+imdb_df <- dataset_imdb(maxlen = 10000, num_words = 10000)
+
+train_text <- imdb_df$train$x
+train_sentiment <- imdb_df$train$y
+
+test_text <- imdb_df$test$x
+test_sentiment <- imdb_df$test$y 
+```
+
+```{r}
+model_tokenizer <- text_tokenizer(num_words = 10000)
+
+train_data <- sequences_to_matrix(model_tokenizer, train_text, "freq")
+test_data <- sequences_to_matrix(model_tokenizer, test_text, "freq")
+```
+
+```{r}
+overfit_model <- keras_model_sequential() %>% 
+  layer_dense(units = 2048, input_shape = ncol(train_data), activation = "relu") %>% 
+  layer_dense(units = 2048, activation = "relu") %>% 
+  layer_dense(units = 2048, activation = "relu") %>% 
+  layer_dense(units = 2048, activation = "relu") %>% 
+  layer_dense(units = 2048, activation = "relu") %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+
+overfit_model %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = "accuracy"
+)
+
+overfit_hist <- overfit_model %>% fit(
+  train_data,
+  train_sentiment,
+  epochs = 30,
+  batch_size = 32,
+  validation_split = .8
+)
+```
+
+
+```{r}
+# Reduce parameters
+# Reduce number of layers and layer width
+# Layer width should generally be larger than number of classes)
+
+model_1 <- keras_model_sequential() %>% 
+  layer_dense(units = 1024, input_shape = ncol(train_data), activation = 'relu') %>%
+  layer_dense(units = 1024, activation = "relu") %>% 
+  layer_dense(units = 1024, activation = "relu") %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+
+model_1 %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = "accuracy"
+)
+
+model_1_hist <- model_1 %>% fit(
+  train_data,
+  train_sentiment,
+  epochs = 30,
+  batch_size = 128,
+  validation_split = 0.8)
+
+count_params(model_1)-count_params(overfit_model)
+
+plot(model_1_hist)
+```
+
+```{r}
+# Adding L1 or L2 penalty to layers 
+model_2 <- keras_model_sequential() %>% 
+  layer_dense(units = 1024, input_shape = ncol(train_data), activation = 'relu') %>%
+  layer_dense(units = 1024, activation = "relu", kernel_regularizer = regularizer_l2(0.001)) %>% 
+  layer_dense(units = 1024, activation = 'relu', kernel_regularizer = regularizer_l2(0.001)) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+model_2 %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = "accuracy"
+)
+
+model_2_hist <- model_2 %>% fit(
+  train_data,
+  train_sentiment,
+  epochs = 30,
+  batch_size = 128,
+  validation_split = 0.8)
+
+plot(model_2_hist)
+```
+
+```{r}
+# Apply layer dropout
+model_3 <- keras_model_sequential() %>% 
+  layer_dense(units = 2048, input_shape = ncol(train_data), activation = 'relu') %>%
+  layer_dropout(rate = 0.5) %>% 
+  layer_dense(units = 2048, activation = "relu", kernel_regularizer = regularizer_l2(0.001)) %>% 
+  layer_dropout(rate = 0.5) %>% 
+  layer_dense(units = 2048, activation = 'relu', kernel_regularizer = regularizer_l2(0.001)) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+model_3 %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = "accuracy"
+)
+
+model_3_hist <- model_3 %>% fit(
+  train_data,
+  train_sentiment,
+  epochs = 30,
+  batch_size = 128,
+  validation_split = 0.8)
+
+plot(model_3_hist)
+```
+
+```{r}
+# Apply batch normalization
+# Usually before dropout 
+model_4 <- keras_model_sequential() %>% 
+  layer_dense(units = 2048, input_shape = ncol(train_data), activation = 'relu') %>%
+  layer_batch_normalization() %>% 
+  layer_dense(units = 2048, activation = "relu", kernel_regularizer = regularizer_l2(0.001)) %>% 
+  layer_dropout(rate = 0.5) %>% 
+  layer_dense(units = 2048, activation = 'relu', kernel_regularizer = regularizer_l2(0.001)) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+model_4 %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = "accuracy"
+)
+
+model_4_hist <- model_4 %>% fit(
+  train_data,
+  train_sentiment,
+  epochs = 30,
+  batch_size = 128,
+  validation_split = 0.8)
+
+plot(model_4_hist)
+```
+
+```{r}
+# callbacks
+model_5 <- keras_model_sequential() %>% 
+  layer_dense(units = 2048, input_shape = ncol(train_data), activation = 'relu') %>%
+  layer_dense(units = 2048, activation = "relu", kernel_regularizer = regularizer_l2(0.001)) %>% 
+  layer_batch_normalization() %>% 
+  layer_dense(units = 2048, activation = 'relu', kernel_regularizer = regularizer_l2(0.001)) %>%
+  layer_dropout(rate = 0.5) %>% 
+  layer_dense(units = 2048, activation = "relu", kernel_regularizer = regularizer_l2(0.001)) %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+
+model_5 %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = "accuracy"
+)
+
+model_5_hist <- model_5 %>% fit(
+  train_data,
+  train_sentiment,
+  epochs = 30,
+  batch_size = 128,
+  validation_split = 0.8,
+  callbacks = list(callback_early_stopping(patience = 10), callback_reduce_lr_on_plateau())
+)
+
+model_5_hist
+```
+
+
+```{r}
+list(overfit_model, model_1, model_2, model_3, model_4, model_5) %>% 
+  map(evaluate, test_data, test_sentiment)
+```

@@ -1,0 +1,220 @@
+---
+title: "TidyTuesdayConv"
+author: "Andrew Couch"
+date: "11/8/2020"
+output: html_document
+---
+
+Video: https://www.youtube.com/watch?v=E9IVgP5cTxA&list=PLJfshcspBCYeJeO8YFT5e5HxuYOb5a_1W&index=17
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(keras)
+```
+
+```{r}
+mnist_df <- dataset_mnist()
+
+train_images <- mnist_df$train$x
+train_labels <- to_categorical(mnist_df$train$y)
+
+test_images <- mnist_df$test$x
+test_labels <- to_categorical(mnist_df$test$y)
+
+test_labels %>% dim()
+```
+
+```{r}
+train_images <- train_images/255
+test_images <- test_images/255
+```
+
+
+```{r}
+train_images <- array_reshape(train_images, c(nrow(train_images), 28*28))
+test_images <- array_reshape(test_images, c(nrow(test_images), 28*28))
+```
+
+```{r}
+standard_image_model <- keras_model_sequential()
+
+standard_image_model %>% 
+  layer_dense(units = 512, input_shape = ncol(train_images), activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = 10, activation = "softmax")
+
+standard_image_model %>% compile(
+  optimizer = "adam",
+  loss = "categorical_crossentropy",
+  metrics = "accuracy"
+)
+```
+
+
+
+```{r}
+standard_image_model %>% fit(
+  x = train_images,
+  y = train_labels,
+  epochs = 50,
+  batch_size = 128,
+  validation_split = .8,
+  callbacks = callback_early_stopping(patience = 5)
+)
+```
+
+
+```{r}
+mnist_df$train$x %>% dim()
+
+c_train_images <- array_reshape(mnist_df$train$x, c(nrow(mnist_df$train$x), 28, 28, 1))
+c_test_images <- array_reshape(mnist_df$test$x, c(nrow(mnist_df$test$x), 28, 28, 1))
+```
+
+```{r}
+conv_image_model <- keras_model_sequential()
+
+
+conv_image_model %>% 
+  layer_conv_2d(filters = 32, kernel_size = c(3,3), input_shape = c(28, 28, 1), activation = "relu") %>% 
+  layer_max_pooling_2d(pool_size = c(2,2)) %>% 
+  layer_conv_2d(filters = 32, kernel_size = c(3,3), activation = "relu") %>% 
+  layer_max_pooling_2d(pool_size = c(2,2)) %>% 
+  layer_flatten() %>% 
+  layer_dense(units = 128, activation = "relu") %>% 
+  layer_dense(units = 10, activation = "softmax")
+
+conv_image_model %>% compile(
+  optimizer = "adam",
+  loss = "categorical_crossentropy",
+  metrics = "accuracy"
+)
+```
+
+
+
+```{r}
+conv_image_model %>% fit(
+  x = c_train_images,
+  y = train_labels,
+  epochs = 50,
+  batch_size = 128,
+  validation_split = .8,
+  callbacks = callback_early_stopping(patience = 5)
+)
+```
+
+
+```{r}
+evaluate(standard_image_model, test_images, test_labels)
+evaluate(conv_image_model, c_test_images, test_labels)
+```
+
+```{r}
+imdb_df <- dataset_imdb(maxlen = 500, num_words = 10000)
+
+train_text <- imdb_df$train$x
+test_text <- imdb_df$test$x
+
+train_sentiment <- imdb_df$train$y
+test_sentiment <- imdb_df$test$y
+```
+
+```{r}
+model_tokenizer <- text_tokenizer(num_words = 10000)
+
+one_hot_train_text <- sequences_to_matrix(model_tokenizer, train_text, "binary")
+one_hot_test_text <- sequences_to_matrix(model_tokenizer, test_text, "binary")
+```
+
+```{r}
+text_model <- keras_model_sequential()
+
+text_model %>% 
+  layer_dense(units = 512, input_shape = 10000, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+
+text_model %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = "accuracy"
+)
+```
+
+```{r}
+text_model %>% fit(
+  one_hot_train_text,
+  train_sentiment,
+  epochs = 50,
+  batch_size = 64,
+  validation_split = .8,
+  callbacks = callback_early_stopping(patience = 5)
+)
+```
+
+
+```{r}
+c_train_text <- pad_sequences(train_text, 500)
+c_test_text <- pad_sequences(test_text, 500)
+```
+
+```{r}
+c_text_model <- keras_model_sequential()
+
+
+c_text_model %>% 
+  layer_embedding(input_dim = 10000, input_length = 500, output_dim = 32) %>% 
+  layer_conv_1d(filters = 32, kernel_size = 3, activation = "relu") %>% 
+  layer_max_pooling_1d(pool_size = 2) %>% 
+  layer_flatten() %>% 
+  layer_dense(units = 128, activation = "relu") %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+
+c_text_model %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = "accuracy"
+)
+```
+
+```{r}
+c_text_model %>% fit(
+  c_train_text,
+  train_sentiment,
+  epochs = 50,
+  batch_size = 64,
+  validation_split = .8,
+  callbacks = callback_early_stopping(patience = 5)
+)
+```
+
+```{r}
+evaluate(text_model, one_hot_test_text, test_sentiment)
+evaluate(c_text_model, c_test_text, test_sentiment)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

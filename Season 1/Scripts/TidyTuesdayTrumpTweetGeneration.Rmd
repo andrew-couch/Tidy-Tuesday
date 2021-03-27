@@ -1,0 +1,193 @@
+---
+title: "TidyTuesdayTrumpTweetGeneration"
+author: "Andrew Couch"
+date: "10/6/2020"
+output: html_document
+---
+
+Video: https://www.youtube.com/watch?v=ux0dBPCMkGE&list=PLJfshcspBCYeJeO8YFT5e5HxuYOb5a_1W&index=22&t=177s
+
+```{r}
+library(keras)
+library(tidyverse)
+library(tokenizers)
+```
+
+```{r}
+# Retrieve text
+df <- read_csv("trumptweets.csv")
+
+
+text <- df %>% 
+  mutate(text = str_replace_all(text, "\\s?(f|ht)(tp)(s?)(://)([^\\.]*)[\\.|/](\\S*)", "")) %>% 
+  mutate(text = tolower(text),
+         text = str_replace_all(text, "[^a-z.\\s]", ""),
+         text = str_replace_all(text, "\n|\r", "")) %>% 
+  pull(text) %>% 
+  str_to_lower() %>% 
+  str_c(collapse = "\n") %>% 
+  tokenize_characters(strip_non_alphanum = FALSE, simplify = TRUE)
+
+print(sprintf("corpus length: %d", length(text)))
+
+chars <- text %>%
+  unique() %>%
+  sort()
+
+maxlen <- 15
+```
+
+```{r}
+# Cut the text in semi-redundant sequences of maxlen characters
+dataset <- map(
+  seq(1, length(text) - maxlen - 1, by = 3),
+  ~list(sentece = text[.x:(.x + maxlen - 1)], next_char = text[.x + maxlen])
+)
+
+dataset <- transpose(dataset)
+
+# Vectorization
+x <- array(0, dim = c(length(dataset$sentece), maxlen, length(chars)))
+y <- array(0, dim = c(length(dataset$sentece), length(chars)))
+
+for(i in 1:length(dataset$sentece)){
+  
+  x[i,,] <- sapply(chars, function(x){
+    as.integer(x == dataset$sentece[[i]])
+  })
+  
+  y[i,] <- as.integer(chars == dataset$next_char[[i]])
+  
+}
+
+```
+
+```{r}
+model <- keras_model_sequential()
+
+model %>%
+  layer_lstm(128, input_shape = c(maxlen, length(chars))) %>%
+  layer_dense(length(chars)) %>%
+  layer_activation("softmax")
+
+optimizer <- optimizer_rmsprop(lr = 0.01)
+
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = optimizer
+)
+
+```
+
+```{r}
+
+sample_mod <- function(preds, temperature = 1){
+  preds <- log(preds)/temperature
+  exp_preds <- exp(preds)
+  preds <- exp_preds/sum(exp(preds))
+  
+  rmultinom(1, 1, preds) %>%
+    as.integer() %>%
+    which.max()
+}
+
+on_epoch_end <- function(epoch, logs) {
+  
+  cat(sprintf("epoch: %02d ---------------\n\n", epoch))
+  
+  for(diversity in c(0.2, 0.5, 1, 1.2)){
+    
+    cat(sprintf("diversity: %f ---------------\n\n", diversity))
+    
+    start_index <- sample(1:(length(text) - maxlen), size = 1)
+    sentence <- text[start_index:(start_index + maxlen - 1)]
+    generated <- ""
+    
+    for(i in 1:400){
+      
+      x <- sapply(chars, function(x){
+        as.integer(x == sentence)
+      })
+      x <- array_reshape(x, c(1, dim(x)))
+      
+      preds <- predict(model, x)
+      next_index <- sample_mod(preds, diversity)
+      next_char <- chars[next_index]
+      
+      generated <- str_c(generated, next_char, collapse = "")
+      sentence <- c(sentence[-1], next_char)
+      
+    }
+    
+    cat(generated)
+    cat("\n\n")
+    
+  }
+}
+
+```
+
+```{r}
+print_callback <- callback_lambda(on_epoch_end = on_epoch_end)
+
+model %>% fit(
+  x, y,
+  batch_size = 128,
+  epochs = 1,
+  callbacks = print_callback
+)
+```
+
+```{r}
+generate_phrase <- function(model, text, chars, max_length, diversity){
+  
+  # this function chooses the next character for the phrase
+  choose_next_char <- function(preds, chars, temperature){
+    preds <- log(preds) / temperature
+    exp_preds <- exp(preds)
+    preds <- exp_preds / sum(exp(preds))
+    
+    next_index <- rmultinom(1, 1, preds) %>% 
+      as.integer() %>%
+      which.max()
+    chars[next_index]
+  }
+  
+  # this function takes a sequence of characters and turns it into a numeric array for the model
+  convert_sentence_to_data <- function(sentence, chars){
+    x <- sapply(chars, function(x){
+      as.integer(x == sentence)
+    })
+    array_reshape(x, c(1, dim(x)))
+  }
+  
+  # the initial sentence is from the text
+  start_index <- sample(1:(length(text) - max_length), size = 1)
+  sentence <- text[start_index:(start_index + max_length - 1)]
+  generated <- ""
+  
+  # while we still need characters for the phrase
+  for(i in 1:(max_length * 20)){
+    
+    sentence_data <- convert_sentence_to_data(sentence, chars)
+    
+    # get the predictions for each next character
+    preds <- predict(model, sentence_data)
+    
+    # choose the character
+    next_char <- choose_next_char(preds, chars, diversity)
+    
+    # add it to the text and continue
+    generated <- str_c(generated, next_char, collapse = "")
+    sentence <- c(sentence[-1], next_char)
+  }
+  
+  generated
+}
+```
+
+```{r}
+generate_phrase(model, text, chars, maxlen, diversity = .5)
+```
+
+

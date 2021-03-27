@@ -1,0 +1,219 @@
+---
+title: "TidyTuesdayClassificationMetrics"
+author: "Andrew Couch"
+date: "8/25/2020"
+output: html_document
+---
+
+Video: https://www.youtube.com/watch?v=am3dgqjd19U&list=PLJfshcspBCYeJeO8YFT5e5HxuYOb5a_1W&index=28
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+
+df <- read_csv("customer_churn.csv")
+```
+
+```{r}
+# Evalute class imbalance
+df %>% count(Churn)
+```
+
+
+```{r}
+# Need to change levels for Churn
+levels(df$Churn %>% as.factor())
+```
+
+```{r}
+# Clean data
+df <- df %>% 
+  drop_na() %>% 
+  mutate_all(as.factor) %>% 
+  mutate(tenure = as.numeric(tenure),
+         MonthlyCharges = as.numeric(MonthlyCharges),
+         TotalCharges = as.numeric(TotalCharges))
+
+
+# Change levels
+
+df <- df %>% mutate(Churn = fct_rev(Churn))
+levels(df$Churn)
+```
+
+```{r}
+# Create train, test, and validation sets 
+set.seed(25)
+
+data_split <- initial_split(df, prop = .8, strata = Churn)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+k_folds <- vfold_cv(train_data)
+```
+
+
+```{r}
+# Pre-processing
+
+model_rec <- recipe(Churn~., data = train_data) %>% 
+  step_rm(customerID) %>% 
+  step_range(all_numeric()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+model_rec %>% prep() %>% juice() %>% summary()
+```
+
+```{r}
+# Metrics
+
+c_metrics <- metric_set(accuracy,
+                        sens, spec,
+                        roc_auc, mn_log_loss)
+
+model_control <- control_grid(save_pred = TRUE)
+```
+
+```{r}
+# Modeling
+
+knn_model <- nearest_neighbor(neighbors = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("kknn")
+
+knn_grid <- grid_regular(parameters(knn_model), levels = 5)
+
+knn_tune <- tune_grid(
+  knn_model,
+  model_rec,
+  resamples = k_folds,
+  control = model_control,
+  metrics = c_metrics
+)
+
+```
+
+
+
+```{r}
+knn_tune %>% 
+  collect_metrics() %>% 
+  ggplot(aes(x = neighbors, y = mean)) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~.metric, scales = "free_y")
+```
+
+
+```{r}
+knn_tune %>% 
+  select(id, .metrics) %>% 
+  unnest(.metrics) %>% 
+  ggplot(aes(x = neighbors, y = .estimate, color = id)) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~.metric, scales = "free_y") + 
+  theme(legend.position = "none")
+```
+
+
+```{r}
+
+c_data_metric <- knn_tune %>% 
+  collect_predictions() %>% 
+  mutate(pred = if_else(.pred_Yes >= .5, "Yes", "No"),
+         pred = as.factor(pred),
+         pred = fct_rev(pred))
+
+
+c_data_metric %>% conf_mat(Churn, pred)
+```
+
+
+```{r}
+c_data_metric %>% 
+  sens(Churn, pred)
+```
+```{r}
+7520 / (7520 + 7440)
+```
+
+```{r}
+# Calculate our ppv 
+c_data_metric %>% 
+  ppv(Churn, pred)
+
+
+```
+
+```{r}
+knn_tune %>% collect_metrics() %>% filter(.metric == "roc_auc") %>% top_n(mean, n = 1)
+```
+
+```{r}
+
+knn_tune %>% 
+  collect_predictions() %>% 
+  group_by(id) %>% 
+  roc_curve(Churn, .pred_Yes) %>% 
+  autoplot()
+
+```
+
+```{r}
+knn_tune %>% 
+  collect_predictions() %>% 
+  gain_curve(Churn, .pred_Yes) %>% 
+  autoplot()
+```
+
+```{r}
+# Collect metrics and fit to model 
+knn_tune %>% select_best(metric = "roc_auc")
+
+knn_model <- nearest_neighbor(neighbors = 14) %>% 
+  set_mode("classification") %>% 
+  set_engine("kknn")
+
+final_model <- workflow() %>% 
+  add_model(knn_model) %>% 
+  add_recipe(model_rec)
+
+
+final_res <- last_fit(final_model, data_split)
+
+```
+
+```{r}
+final_res %>% collect_predictions() %>% 
+  select(.pred_Yes, Churn) %>% 
+  mutate(.pred = 100*.pred_Yes) %>% 
+  select(-.pred_Yes) %>% 
+  mutate(.pred = round(.pred/5)*5) %>% 
+  count(.pred, Churn) %>% 
+  pivot_wider(names_from = Churn, values_from = n) %>% 
+  mutate(prob = Yes / (Yes + No)) %>% 
+  mutate(prob = 100*prob) %>% 
+  ggplot(aes(x = .pred, y = prob)) + 
+  geom_point() + 
+  geom_smooth() + 
+  geom_abline() + 
+  coord_fixed(xlim = c(0,100), ylim = c(0,100))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
