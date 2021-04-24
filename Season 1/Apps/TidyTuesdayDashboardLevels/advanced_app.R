@@ -45,7 +45,8 @@ ui <- dashboardPage(
                                     value = 20))),
             tabItem(tabName = "fighter_tab",
                     fluidRow(box(uiOutput("fighter_selector2")), box(uiOutput("weight_class_selector_3"))),
-                    fluidRow(box(dataTableOutput("fighter_desc")), box(plotlyOutput("fighter_radar"))))
+                    fluidRow(box(DT::dataTableOutput("fighter_desc"), width = 12, column(align = "center", width = 12))),
+                    fluidRow(box(plotlyOutput("fighter_radar"), width = 12, column(align = "center", width = 12))))
         )
     )
  
@@ -55,6 +56,7 @@ server <- function(input, output) {
     helper <- reactive({
       load("advanced_dashboard_helper.Rdata")
     })
+    
     elo_1 <- reactive(create_elo_data(input$v_k_1))
     elo_2 <- reactive(create_elo_data(input$v_k_2))
     elo <- reactive(elo.run(winner ~ fighter + opponent,
@@ -143,14 +145,22 @@ server <- function(input, output) {
             color = "red",
             icon = icon("hand-rock")
         )
-    })
-    output$fighter_desc <- renderDataTable({
-      df %>% 
-        select(fighter, height = Height_cms, reach = Reach_cms, Stance, age, wins, losses) %>% 
-        filter(fighter == input$v_fighter_desc) %>% 
-        rename_all(~str_replace(.x, "_", " ") %>% str_to_title) %>% 
-        mutate(Fights = Wins + Losses) %>% 
-        filter(Fights == max(Fights)) 
+        })
+        output$fighter_desc <- DT::renderDataTable({
+          DT::datatable(
+            df %>% 
+              select(date, fighter, height = Height_cms, reach = Reach_cms, Stance, age, wins, losses) %>% 
+              mutate(date = as.Date(date)) %>% 
+              filter(fighter == input$v_fighter_desc) %>% 
+              rename_all(~str_replace(.x, "_", " ") %>% str_to_title) %>% 
+              add_tally(name = "Fights") %>% 
+              slice_max(Date, n = 1) %>% 
+              select(-Date),
+            options = list(paging = FALSE,
+                           searching = FALSE),
+            rownames= FALSE
+          )
+          
     })
     output$fighter_radar <- renderPlotly({
       radar_df <- df %>%

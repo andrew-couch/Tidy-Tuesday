@@ -14,8 +14,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(tidymodels)
+library(here)
 
-df <- read_csv("customer_churn.csv")
+df <- read_csv(here("Data/customer_churn.csv"))
 ```
 
 ```{r}
@@ -174,18 +175,5 @@ contrast_models(roc_auc_model)
 contrast_models(roc_auc_model) %>% 
   ggplot()
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 

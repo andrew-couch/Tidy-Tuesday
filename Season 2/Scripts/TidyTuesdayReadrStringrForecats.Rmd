@@ -1,0 +1,110 @@
+---
+title: "TidyTuesday Tidyr, Stringr, and Forecats"
+author: "Andrew Couch"
+date: "4/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(here)
+
+df <- read_csv(here("Data/fight_data.csv"))
+```
+
+```{r}
+#write_csv(df, "test.csv", append = TRUE)
+```
+
+```{r}
+df %>% 
+  mutate(method = str_squish(method) %>% str_trim(),
+         fighter = str_to_title(fighter),
+         method = na_if(method, ""))
+```
+
+
+```{r}
+df %>% 
+  filter(str_detect(fighter, "Derek B"))
+```
+
+
+
+```{r}
+df %>% 
+  select(weight_class, kd, strike_landed, sig_strike_landed, td_landed) %>% 
+  separate(weight_class, c("gender", "weightclass"), sep = "_") %>% 
+  group_by(gender, weightclass) %>% 
+  summarise(median_strike_landed = median(strike_landed, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = weightclass, y = median_strike_landed, fill = gender)) + 
+  geom_col() + 
+  coord_flip()
+```
+
+```{r}
+df %>% 
+  select(weight_class, kd, strike_landed, sig_strike_landed, td_landed) %>% 
+  separate(weight_class, c("gender", "weightclass"), sep = "_") %>% 
+  group_by(gender, weightclass) %>% 
+  summarise(median_strike_landed = median(strike_landed, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  filter(!str_detect(weightclass, "Catch")) %>% 
+  mutate(median_strike_landed = if_else(gender == "Men", median_strike_landed, -median_strike_landed),
+         weightclass = fct_reorder(weightclass, median_strike_landed)) %>%
+  ggplot(aes(x = weightclass, y = median_strike_landed, fill = gender)) + 
+  geom_col() + 
+  coord_flip()
+```
+
+```{r}
+df %>% 
+  select(weight_class, kd, strike_landed, sig_strike_landed, td_landed) %>% 
+  separate(weight_class, c("gender", "weightclass"), sep = "_") %>% 
+  group_by(gender, weightclass) %>% 
+  summarise(median_strike_landed = median(strike_landed, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  filter(!str_detect(weightclass, "Catch")) %>% 
+  mutate(median_strike_landed = if_else(gender == "Men", median_strike_landed, -median_strike_landed)) %>% 
+  mutate(weightclass_order = case_when(
+    weightclass == "Strawweight" ~ 1,
+    weightclass == "Flyweight" ~ 2,
+    weightclass == "Bantamweight" ~ 3,
+    weightclass == "Featherweight" ~ 4,
+    weightclass == "Lightweight" ~ 5,
+    weightclass == "Welterweight" ~ 6,
+    weightclass == "Middleweight" ~ 7,
+    T ~ 8
+  ),
+  weightclass = fct_reorder(weightclass, weightclass_order)) %>%
+  ggplot(aes(x = weightclass, y = median_strike_landed, fill = gender)) + 
+  geom_col() + 
+  coord_flip()
+```
+
+
+```{r}
+df %>% 
+  count(method, sort = T)
+
+df %>% 
+  mutate(method = fct_lump_min(method, min = 161)) %>% 
+  count(method) %>% 
+  ggplot(aes(x = method, y = n)) + 
+  geom_col()
+```
+
+```{r}
+df %>% 
+  mutate(method = fct_lump_min(method, min = 161)) %>% 
+  count(method) %>% 
+  mutate(method = fct_relevel(method, "Other", "Decision")) %>% 
+  ggplot(aes(x = method, y = n)) + 
+  geom_col()
+```
+

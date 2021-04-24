@@ -1,0 +1,218 @@
+---
+title: "TidyTuesday Tidyr & Dplyr"
+author: "Andrew Couch"
+date: "4/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+
+billboard
+```
+
+
+# Tidyr Functions 
+```{r}
+billboard %>% 
+  pivot_longer(wk1:wk76, names_to = "week", values_to = "rank") %>% 
+  drop_na() %>% 
+  pivot_wider(names_from = week, values_from = rank, values_fill = as.double(-999))
+```
+
+```{r}
+billboard %>% 
+  select(artist, track) %>% 
+  mutate(n = 1) %>% 
+  pivot_wider(names_from = artist, values_from = n, values_fill = 0)
+```
+
+
+```{r}
+billboard %>% 
+  nest(-artist)
+```
+
+```{r}
+billboard
+```
+
+
+```{r}
+billboard %>% 
+  separate_rows(artist, sep = ", ")
+```
+
+
+# Dplyr
+```{r}
+iris %>% 
+  mutate(sqrt_sepal = sqrt(Sepal.Length),
+         larger_than_five = if_else(Sepal.Length > 5, "Greater than 5", "Not greater than 5")) %>% 
+  count(Species, larger_than_five) %>% 
+  pivot_wider(names_from = larger_than_five, values_from = n)
+```
+
+```{r}
+iris %>% 
+  mutate(sqrt_sepal = sqrt(Sepal.Length),
+         larger_than_five = if_else(Sepal.Length > 5, "Greater than 5", "Not greater than 5")) %>% 
+  count(Species, larger_than_five, sort = TRUE, name = "count")
+```
+
+
+```{r}
+iris %>% 
+  filter((Species == "setosa" & Sepal.Length < 5) | (Species == "versicolor" & Petal.Length > 1))
+```
+
+```{r}
+iris %>% 
+  select(Sepal.Length, Species)
+
+iris %>% 
+  select(-Sepal.Length)
+```
+ 
+```{r}
+iris %>% 
+  group_by(Species) %>% 
+  summarise(avg_sepal_length = mean(Sepal.Length))
+```
+
+
+
+
+```{r}
+iris %>% 
+  group_by(Species) %>% 
+  mutate(avg_sepal_length = mean(Sepal.Length)) %>% 
+  ungroup() %>% 
+  mutate(avg_length = mean(Sepal.Length))
+```
+
+```{r}
+iris %>% 
+  group_by(Species) %>% 
+  summarise(avg_length = mean(Sepal.Length),
+            obs = n())
+```
+
+
+```{r}
+iris %>% 
+  mutate(test = case_when(
+    Sepal.Length > 5 & Sepal.Width > 3 ~ "Large",
+    Sepal.Length < 4 & Sepal.Width < 2 ~ "Small",
+    T ~ "Medium"
+  ))
+
+iris %>% 
+  mutate(test = if_else(Sepal.Length > 5 & Sepal.Width > 3, 
+                        "Large", 
+                        if_else(Sepal.Length < 4 & Sepal.Width < 2, 
+                                "Small", 
+                                "Mediaum")))
+```
+
+
+```{r}
+economics %>% 
+  select(date, unemploy) %>% 
+  mutate(prev_unemploy = lag(unemploy, n = 1, order_by = date, default = unemploy)) %>% 
+  ggplot(aes(x = date)) + 
+  geom_line(aes(y = unemploy)) + 
+  geom_point(aes(y = prev_unemploy))
+```
+
+```{r}
+iris %>% 
+  arrange(desc(Sepal.Length)) %>% 
+  mutate(s_length_rank = cume_dist(Sepal.Length))
+```
+
+```{r}
+iris %>%
+  slice_min(Sepal.Length)
+
+iris %>% 
+  filter(dense_rank(desc(Sepal.Length)) < 5)
+
+iris %>% 
+  arrange(desc(Sepal.Length)) %>% 
+  slice(1:15)
+```
+```{r}
+band_instruments2
+band_instruments
+```
+
+
+```{r}
+band_members %>% 
+  left_join(band_instruments)
+```
+
+
+```{r}
+df <- tibble(x = c(1, 2, 3),
+       y = c(2, 3, 4),
+       z = c(4, 5, 6))
+
+
+df2 <- tibble(x = c(1, 2, 3),
+       a = c(2, 3, 4),
+       b = c(4, 5, 6))
+```
+
+```{r}
+df
+```
+
+```{r}
+df2
+```
+
+
+```{r}
+df %>% 
+  inner_join(df2, by = "x")
+
+```
+
+
+```{r}
+df2 %>% 
+  anti_join(df %>% filter(z < 5), by = "x")
+```
+
+```{r}
+iris 
+
+
+iris2 <- iris %>%slice(1:10)
+
+```
+
+```{r}
+iris
+iris2
+
+setdiff(iris, iris2)
+```
+
+
+
+
+```{r}
+intersect(iris2, iris)
+```
+```{r}
+union(iris, iris2)
+```
+
