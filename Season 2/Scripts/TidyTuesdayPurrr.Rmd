@@ -1,0 +1,199 @@
+---
+title: "A Breif Overview of Purrr"
+author: "Andrew Couch"
+date: "5/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+iris %>% 
+  mutate(sqrt_sepal_length = sqrt(Sepal.Length),
+         map_sqrt = map_dbl(Sepal.Length, sqrt))
+```
+
+```{r}
+iris %>% 
+  mutate(sqrt_sepal_length = sqrt(Sepal.Length),
+         map_sqrt = map(Sepal.Length, sqrt))
+```
+
+```{r}
+iris %>% 
+  mutate(map_sqrt = map_dbl(Sepal.Length, log, base = 3))
+
+iris %>% 
+  mutate(base = 3) %>% 
+  mutate(map_sqrt = map2_dbl(Sepal.Length, base, log))
+```
+
+
+```{r}
+library(broom)
+
+iris %>% 
+  nest(-Species) %>% 
+  mutate(model = map(data, ~lm(Sepal.Length~ Sepal.Width + Petal.Length + Petal.Width, data = .x)),
+         tidy_model = map(model, tidy)) %>% 
+  select(Species, tidy_model) %>% 
+  unnest() %>% 
+  ggplot(aes(x = term, y=  estimate, color = Species)) + 
+  geom_point()
+```
+
+
+```{r}
+library(tidymodels)
+
+set.seed(54)
+
+model_data <- iris %>% 
+  nest(-Species) %>% 
+  mutate(data_splits = map(data, initial_split, prop = 0.8),
+         train_data = map(data_splits, training),
+         test_data = map(data_splits, testing))
+
+model_data
+```
+
+
+```{r}
+rf_model <- rand_forest(trees = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("randomForest")
+
+rf_grid <- grid_regular(parameters(rf_model))
+```
+
+```{r}
+# Create k folds and recipe
+model_data <- model_data %>% 
+  mutate(recipe = map(train_data, .f = function(x){
+    recipe(Sepal.Length~., data = x)
+  }),
+  k_folds_data = map(train_data, vfold_cv))
+```
+
+
+```{r}
+train_models <- function(recipe, k_fold_data){
+  tune_grid(
+    rf_model,
+    recipe,
+    grid = rf_grid,
+    resamples = k_fold_data
+  )
+}
+```
+
+
+
+```{r}
+model_data <- model_data %>% mutate(tune_results = map2(recipe, k_folds_data, train_models))
+```
+
+```{r}
+model_data <- model_data %>% 
+  mutate(parameters = map(tune_results, ~show_best(.x, "rmse", n = 1))) %>% 
+  mutate(final_model = map2(parameters, recipe, .f = function(x, y){
+    workflow() %>% 
+      add_model(rf_model) %>% 
+      add_recipe(y) %>% 
+      finalize_workflow(x)
+  }),
+  eval = map2(final_model, data_splits, last_fit))
+```
+
+
+```{r}
+model_data %>% 
+  select(Species, eval) %>% 
+  mutate(metrics = map(eval, collect_metrics)) %>% 
+  select(Species, metrics) %>% 
+  unnest()
+```
+
+```{r}
+iris %>% 
+  nest(-Species) %>% 
+  mutate(chart = map(data, .f = function(x){
+    ggplot(data = x, aes(x = Sepal.Length, y = Sepal.Width)) + 
+      geom_point()
+  })) %>% 
+  pull(chart)
+```
+
+
+```{r}
+library(progress)
+
+sim <- tibble(x = seq.int(1, 1000))
+
+pb <- progress_bar$new(total = nrow(sim))
+
+generic_function <- function(x){
+  pb$tick()
+  Sys.sleep(1/100)
+  x^2
+}
+
+sim %>% 
+  mutate(x = map_dbl(x, generic_function))
+```
+
+
+```{r}
+library(furrr)
+plan(multisession, workers = 4)
+
+
+sim <- tibble(x = seq.int(1, 1000))
+
+parallel_function <- function(sim){
+  sqrt(sim)
+}
+```
+
+
+```{r}
+Begin <- Sys.time()
+
+sim %>% 
+  mutate(sim = map(sim, parallel_function))
+
+End <- Begin - Sys.time()
+```
+
+```{r}
+Begin <- Sys.time()
+
+sim %>% 
+  mutate(sim = future_map(sim, parallel_function))
+
+End2 <- Begin - Sys.time()
+```
+
+
+```{r}
+safe_log <- safely(log)
+
+list("a", 10, 100) %>%
+  map(safe_log) %>%
+  transpose()
+
+list("a", 10, 100) %>%
+  map_dbl(possibly(log, NA_real_))
+```
+
+
+
+
+
+
+
+
