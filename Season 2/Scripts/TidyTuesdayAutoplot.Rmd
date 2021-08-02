@@ -1,0 +1,302 @@
+---
+title: "Autoplot"
+author: "Andrew Couch"
+date: "8/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidymodels)
+library(stacks)
+library(finetune)
+library(vip)
+library(tidyposterior)
+library(modeldata)
+options(tidymodels.dark = TRUE)
+
+data("two_class_dat")
+data("ames")
+
+classification_data <- two_class_dat
+regression_data <- ames
+
+is.na(classification_data) %>% colSums()
+is.na(regression_data) %>% colSums()
+```
+
+# Data Partition
+```{r}
+set.seed(1)
+class_split <- initial_split(classification_data, strata = "Class")
+reg_split <- initial_split(regression_data)
+
+class_train <- training(class_split)
+reg_train <- training(reg_split)
+
+class_k_folds <- vfold_cv(class_train)
+reg_k_folds <- vfold_cv(reg_train)
+```
+
+
+# Pre-Processing
+```{r}
+class_rec <- recipe(Class~., data = class_train)
+
+reg_rec <- recipe(Sale_Price~., data = reg_train) %>% 
+  step_nzv(all_predictors()) %>% 
+  step_corr(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>% 
+  step_BoxCox(all_numeric_predictors()) %>% 
+  step_other(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+
+reg_removal_rec <- recipe(Sale_Price~., data = reg_train) %>% 
+  step_nzv(all_predictors(), freq_cut = tune(), unique_cut = tune()) %>%
+  step_corr(all_numeric_predictors(), threshold = tune()) %>% 
+  step_lincomb(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_BoxCox(all_numeric_predictors()) %>% 
+  step_other(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+```
+
+# Models
+```{r}
+# Regression
+elastic_reg <- linear_reg(mixture = tune(), penalty = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+xgboost_reg <- boost_tree(learn_rate = tune(), trees = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("xgboost")
+
+randomForest_reg <- rand_forest(trees = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger")
+
+# Classification
+elastic_class <- logistic_reg(mixture = tune(), penalty = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("glmnet")
+
+xgboost_class <- boost_tree(learn_rate = tune(), trees = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost")
+
+randomForest_class <- rand_forest(trees = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger")
+```
+
+# Metrics and Control
+```{r}
+classification_metrics <- metric_set(roc_auc, accuracy)
+regression_metrics <- metric_set(rmse, mae, rsq)
+
+model_control <- control_stack_grid()
+```
+
+
+# Tune 
+```{r}
+classification_set <- workflow_set(
+  preproc = list(regular = class_rec),
+  models = list(elastic = elastic_class, xgboost = xgboost_class, randomForest = randomForest_class),
+  cross = TRUE
+)
+
+classification_set <- classification_set %>% 
+  workflow_map("tune_sim_anneal", resamples = class_k_folds, metrics = classification_metrics)
+```
+
+```{r}
+elastic_reg_tune <- tune_race_anova(elastic_reg,
+                                    reg_rec,
+                                    resamples = reg_k_folds,
+                                    grid = grid_regular(parameters(elastic_reg)),
+                                    metrics = regression_metrics)
+
+elastic_rem_reg_tune <- tune_bayes(elastic_reg,
+                                   reg_removal_rec,
+                                   resamples = reg_k_folds,
+                                   metrics = regression_metrics)
+
+randomForest_reg_tune <- tune_grid(randomForest_reg,
+                                   reg_rec,
+                                   resamples = reg_k_folds,
+                                   metrics = regression_metrics,
+                                   control = model_control)
+
+randomForest_rem_reg_tune <- tune_grid(randomForest_reg,
+                                       reg_removal_rec,
+                                       resamples = reg_k_folds,
+                                       metrics = regression_metrics,
+                                       control = model_control)
+
+xgboost_reg_tune <- tune_grid(xgboost_reg,
+                              reg_rec,
+                              resamples = reg_k_folds,
+                              metrics = regression_metrics,
+                              control = model_control)
+
+xgboost_rem_reg_tune <- tune_grid(xgboost_reg,
+                                  reg_removal_rec,
+                                  resamples = reg_k_folds,
+                                  metrics = regression_metrics,
+                                  control = model_control)
+```
+
+```{r}
+tibble(models = list(elastic_reg_tune, randomForest_reg_tune, xgboost_reg_tune,
+                     elastic_rem_reg_tune, randomForest_rem_reg_tune, xgboost_rem_reg_tune),
+       names = c("elastic", "rf", "xgboost", "elastic", "rf", "xgboost"),
+       model_type = c("reg", "reg", "reg", "rem", "rem", "rem")) %>% 
+  mutate(metrics = map_dbl(models, ~show_best(.x, "rmse", 1) %>% pluck("mean", 1))) %>% 
+  group_by(names) %>% 
+  slice_min(metrics, n = 1) %>% 
+  ungroup() 
+```
+
+# Model Eval
+```{r}
+# Plot tuning set 
+autoplot(classification_set)
+autoplot(classification_set, rank_metric = "roc_auc", id = "regular_elastic")
+
+rank_results(classification_set, rank_metric = "roc_auc") %>% 
+  filter(.metric == "roc_auc")
+
+classification_set %>% 
+  extract_workflow_set_result("regular_elastic") %>% 
+  show_best("roc_auc", n = 1)
+
+classification_set %>% 
+  extract_workflow_set_result("regular_randomForest") %>% 
+  show_best("roc_auc", n = 1)
+```
+
+```{r}
+# Plot tuning parameters 
+autoplot(randomForest_rem_reg_tune)
+
+# Plot tuning race parameters 
+plot_race(elastic_reg_tune)
+
+# Plot tuning search parameters
+autoplot(elastic_rem_reg_tune, type = "performance")
+autoplot(elastic_rem_reg_tune, type = "parameters")
+autoplot(elastic_rem_reg_tune, type = "marginals")
+```
+
+```{r}
+elastic_class_model <- logistic_reg(penalty = 0.002463956, mixture = 0.114304) %>% 
+  set_mode("classification") %>% 
+  set_engine("glmnet")
+
+randomForest_class_model <- rand_forest(trees = 1915) %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger")
+
+elastic_class_res <- fit_resamples(elastic_class_model,
+                                   class_rec,
+                                   resamples = class_k_folds,
+                                   control = control_resamples(save_pred = T))
+
+randomForest_class_res <- fit_resamples(randomForest_class_model,
+                                        class_rec,
+                                        resamples = class_k_folds,
+                                        control = control_resamples(save_pred = T))
+```
+
+
+# Classification Metric Curves
+```{r}
+randomForest_class_res %>% 
+  collect_predictions() %>% 
+  gain_curve(truth = Class, estimate = .pred_Class1) %>% 
+  autoplot()
+
+randomForest_class_res %>% 
+  collect_predictions() %>% 
+  roc_curve(truth = Class, estimate = .pred_Class1) %>% 
+  autoplot()
+
+randomForest_class_res %>% 
+  collect_predictions() %>% 
+  group_by(id) %>% 
+  lift_curve(truth = Class, estimate = .pred_Class1) %>% 
+  autoplot()
+```
+
+```{r}
+randomForest_class_res %>% 
+  collect_predictions() %>% 
+  filter(id == "Fold01") %>% 
+  conf_mat(truth = Class, estimate = .pred_class) %>% 
+  autoplot(type = "heatmap")
+
+# Weirdly doesnt work
+# randomForest_class_res %>% 
+#   conf_mat_resampled() %>% 
+#   autoplot()
+```
+
+
+# Model Comparison
+```{r}
+class_comp <- inner_join(
+  elastic_class_res %>% 
+    collect_metrics(summarize = FALSE) %>% 
+    filter(.metric == "roc_auc") %>% 
+    select(id, elastic = .estimate),
+  randomForest_class_res %>% 
+    collect_metrics(summarize = FALSE) %>% 
+    filter(.metric == "roc_auc") %>% 
+    select(id, rf = .estimate)
+)
+
+class_post <- perf_mod(class_comp)
+
+autoplot(class_post)
+autoplot(contrast_models(class_post))
+```
+
+
+# Model Stacking
+```{r}
+ensemble_model <- stacks() %>% 
+  add_candidates(randomForest_rem_reg_tune) %>% 
+  add_candidates(xgboost_reg_tune) %>% 
+  blend_predictions()
+
+autoplot(ensemble_model)
+autoplot(ensemble_model, type = "members")
+autoplot(ensemble_model, type = "weights")
+```
+
+# Variable Importance
+```{r} 
+workflow() %>% 
+  add_model(xgboost_reg) %>% 
+  add_recipe(reg_rec) %>% 
+  finalize_workflow(xgboost_reg_tune %>% show_best("rmse", n = 1)) %>% 
+  fit(regression_data) %>% 
+  pull_workflow_fit() %>% 
+  vip()
+```
+
+```{r}
+workflow() %>% 
+  add_model(xgboost_reg) %>% 
+  add_recipe(reg_rec) %>% 
+  finalize_workflow(xgboost_reg_tune %>% show_best("rmse", n = 1)) %>% 
+  fit(regression_data) %>% 
+  pull_workflow_fit() %>% 
+  vi()
+```
+
