@@ -1,0 +1,160 @@
+---
+title: "A Brief Intro into Ggplot2"
+author: "Andrew Couch"
+date: "8/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+
+
+```{r}
+ggplot(data = iris, mapping = aes(x = Sepal.Length, y = Sepal.Width)) +
+  geom_point()
+```
+
+
+
+
+```{r}
+# Same thing but do slightly different things
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width)) +
+  geom_point(aes(color = Species))
+
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
+  geom_point()
+```
+
+
+```{r}
+# Example of how specifying color impacts the plot
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
+  geom_point() + 
+  geom_smooth(method = "glm")
+
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width)) +
+  geom_point(aes(color = Species)) + 
+  geom_smooth(method = "glm")
+
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width, group = Species)) +
+  geom_point() + 
+  geom_smooth(method = "glm", aes(color = Species))
+
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width, group = Species)) +
+  geom_point(aes(color = Species)) + 
+  geom_smooth(method = "glm")
+```
+
+
+```{r}
+ggplot(data = diamonds, aes(x = color)) + 
+  geom_bar()
+
+count(diamonds, color) %>% 
+  mutate(color = fct_reorder(color, n)) %>% 
+  ggplot(aes(x = color, y = n)) +
+  geom_col()
+```
+
+
+```{r}
+diamonds %>% 
+  count(cut, color) %>% 
+  ggplot(aes(x = color, y = n, fill = cut)) + 
+  geom_col(position = "dodge")
+
+diamonds %>% 
+  count(cut, color) %>% 
+  ggplot(aes(x = color, y = n, fill = cut)) + 
+  geom_col()
+```
+
+
+
+```{r}
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
+  geom_point() + 
+  geom_smooth(method = "glm") + 
+  facet_wrap(~Species, scales = "free")
+
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
+  geom_point() + 
+  geom_smooth(method = "glm") + 
+  facet_grid(rows = vars(Species))
+```
+
+
+
+```{r}
+diamonds %>% 
+  ggplot(aes(x = carat, y = price)) + 
+  geom_point() +
+  facet_grid(rows = vars(cut), cols = vars(color), scales = "free")
+
+diamonds %>% 
+  ggplot(aes(x = carat, y = price)) + 
+  geom_point() +
+  facet_wrap(~cut + color, scales = "free")
+```
+
+
+```{r}
+# Custom colors
+diamonds %>% 
+  ggplot(aes(x = carat, y = price, color = price)) + 
+  geom_point() +
+  scale_color_viridis_c() 
+```
+
+
+```{r}
+diamonds %>% 
+  ggplot(aes(x = carat, y = price, color = price)) + 
+  geom_point() +
+  scale_color_viridis_c() +
+  labs(title = "Carat vs Price",
+       subtitle = "Larger stones are more expensive",
+       x = "Carat",
+       y = "Price",
+       color = "Dollars") +
+  scale_y_continuous(labels = scales::dollar_format())
+```
+
+```{r}
+diamonds %>% 
+  count(cut, color) %>% 
+  group_by(cut) %>% 
+  mutate(prop = n / sum(n)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = cut, y = prop, fill = color)) + 
+  geom_col() + 
+  scale_y_continuous(labels = scales::percent_format())
+```
+
+
+```{r}
+ggplot(data = iris, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
+  geom_point() +
+  theme(legend.position = "top")
+```
+
+
+```{r}
+p <- ggplot(data = iris, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
+  geom_point()
+
+
+p <- p + labs(title = "Species")
+
+p
+
+ggsave(filename = "first_plot.png", plot = p, width = 11, height = 8.5, units = "in")
+```
+
