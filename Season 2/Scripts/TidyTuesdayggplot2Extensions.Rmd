@@ -1,0 +1,93 @@
+---
+title: "Common ggplot2 Extensions"
+author: "Andrew Couch"
+date: "8/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+library(ggthemes)
+iris %>% 
+  ggplot(aes(x = Sepal.Length, y = Sepal.Width, color = Species)) + 
+  geom_point() +
+  theme_fivethirtyeight()
+```
+
+```{r}
+library(gghighlight)
+
+economics %>% 
+  pivot_longer(-date) %>% 
+  group_by(name) %>% 
+  mutate(value = scale(value)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = date, y = value, color = name)) + 
+  geom_line() + 
+  gghighlight(name %in% c("unemploy", "uempmed"))
+```
+
+```{r}
+library(GGally)
+
+ggduo(iris)
+ggpairs(iris)
+```
+
+```{r}
+ggbivariate(iris, outcome = "Species")
+```
+
+```{r}
+library(ggridges)
+
+iris %>% 
+  mutate(across(is.numeric, scale)) %>% 
+  pivot_longer(-Species) %>% 
+  ggplot(aes(x = value, y = name, fill = stat(x))) + 
+  geom_density_ridges_gradient(
+    # jittered_points = TRUE, scale = .95, rel_min_height = .01,
+    # point_shape = "|", point_size = 3, size = 0.25,
+    # position = position_points_jitter(height = 0)
+  ) +
+  scale_fill_viridis_c(name = "Values", option = "C") +
+  theme_fivethirtyeight()
+```
+
+
+```{r}
+mtcars %>% 
+  as_tibble(rownames = "model") %>% 
+  ggplot(aes(x = mpg, y = hp, label = model)) + 
+  geom_point() +
+  geom_label()
+```
+
+```{r}
+library(ggrepel)
+mtcars %>% 
+  as_tibble(rownames = "model") %>% 
+  ggplot(aes(x = mpg, y = hp, label = model)) + 
+  geom_point() +
+  geom_text_repel(min.segment.length = 0)
+```
+
+```{r}
+library(ggtext)
+
+iris %>% 
+  ggplot(aes(x = Species, y = Sepal.Length, color = Species)) + 
+  geom_boxplot() + 
+  labs(title = "Comparing <span style = 'color:#F8766D;'>Setosa</span>, <span style = 'color:#7CAE00;'>Versicolor</span>, and <span style = 'color:#529EFF;'>Virginica</span>") + 
+  theme(plot.title = element_textbox_simple())  
+```
+
