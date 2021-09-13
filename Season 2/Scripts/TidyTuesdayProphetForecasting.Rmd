@@ -1,0 +1,249 @@
+---
+title: "TidyTuesday Prophet"
+author: "Andrew Couch"
+date: "9/13/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(tidymodels)
+library(prophet)
+
+df <- read_csv("Data/example_retail_sales.csv")
+```
+
+```{r}
+cleaned_df <- df %>% 
+  mutate(ds = as.Date(ds, "%m/%d/%Y"))
+```
+
+```{r}
+cleaned_df %>% 
+  ggplot(aes(x = ds, y = y)) + 
+  geom_line() + 
+  geom_smooth(method = "lm")
+```
+
+
+```{r}
+wrong_split <- initial_split(cleaned_df)
+
+
+bind_rows(
+  training(wrong_split) %>% mutate(type = "train"),
+  testing(wrong_split) %>% mutate(type = "test")
+) %>% 
+  ggplot(aes(x = ds, y= y, color = type, group = NA)) + 
+  geom_line()
+```
+
+
+```{r}
+correct_split <- initial_time_split(cleaned_df %>% arrange(ds))
+
+bind_rows(
+  training(correct_split) %>% mutate(type = "train"),
+  testing(correct_split) %>% mutate(type = "test")
+) %>% 
+  ggplot(aes(x = ds, y= y, color = type, group = NA)) + 
+  geom_line()
+```
+
+
+
+```{r}
+m <- prophet(df = cleaned_df %>% arrange(ds))
+
+future <- make_future_dataframe(m, periods = 6, freq = "month", include_history = TRUE)
+
+forecast <- predict(m, future)
+
+prophet_plot_components(m, forecast)
+
+plot(m, forecast) + 
+  add_changepoints_to_plot(m)
+```
+
+
+```{r}
+rolling_origin(cleaned_df %>% arrange(ds), initial = 52, assess = 6) 
+
+sliding_period(cleaned_df %>% arrange(ds), ds, period = "year", lookback = Inf, assess_stop = 1) %>% 
+  mutate(train_data = map(splits, analysis),
+         test_data = map(splits, assessment)) %>% 
+  select(-splits) %>% 
+  pivot_longer(-id) %>% 
+  filter(id %in% c("Slice01", "Slice02", "Slice03")) %>% 
+  unnest(value) %>% 
+  ggplot(aes(x = ds, y = y, color = name, group = NA)) + 
+  geom_line() + 
+  facet_wrap(~id, scales = "fixed")
+```
+
+
+
+```{r}
+timeseries_k_folds <- sliding_period(cleaned_df %>% arrange(ds), ds, period = "year", lookback = Inf, assess_stop = 1)
+```
+
+```{r}
+tune_prophet <- function(splits){
+  train_data <- analysis(splits)
+  test_data <- assessment(splits)
+  
+  m1 <- prophet(df = train_data, seasonality.mode = "additive")
+  m2 <- prophet(df = train_data, seasonality.mode = "multiplicative")
+  
+  future <- make_future_dataframe(m1, periods = nrow(test_data), freq = "month", include_history = FALSE)
+  
+  
+  bind_rows(
+    predict(m1, future) %>% select(ds, yhat) %>% mutate(type = "additive"),
+    predict(m2, future) %>% select(ds, yhat) %>% mutate(type = "multiplicative")
+  ) %>% left_join(test_data, by = "ds")
+}
+
+tune_prophet2 <- function(splits, season_type){
+  train_data <- analysis(splits)
+  test_data <- assessment(splits)
+  
+  m <- prophet(df = train_data, seasonality.mode = season_type)
+  
+  future <- make_future_dataframe(m1, periods = nrow(test_data), freq = "month", include_history = FALSE)
+  
+  predict(m, future) %>% select(ds, yhat) %>% left_join(test_data, by = "ds")
+}
+```
+
+
+```{r}
+ts_tune <- timeseries_k_folds %>% slice_tail(n = 10) %>% mutate(res = map(splits, tune_prophet))
+```
+
+
+
+```{r}
+ts_tune %>% 
+  select(id, res) %>% 
+  unnest(res) %>% 
+  group_by(id, type) %>% 
+  arrange(ds) %>% 
+  mutate(forecast = paste0("forecast_", row_number())) %>% 
+  ungroup() %>% 
+  select(forecast, type, ds, yhat, y) %>% 
+  group_by(forecast, type) %>% 
+  rmse(truth = y, estimate = yhat) %>% 
+  ungroup() %>% 
+  group_by(forecast) %>% 
+  slice_min(.estimate) %>% 
+  ungroup() 
+```
+
+```{r}
+ts_tune %>% 
+  select(id, res) %>% 
+  unnest(res) %>% 
+  group_by(id, type) %>% 
+  arrange(ds) %>% 
+  mutate(forecast = paste0("forecast_", row_number())) %>% 
+  ungroup() %>% 
+  select(forecast, type, ds, yhat, y) %>% 
+  left_join(cleaned_df %>% 
+              mutate(naive = lag(y, n = 1, order_by = ds)) %>% 
+              drop_na() %>% 
+              select(ds, naive),
+            by =  "ds") %>% 
+  group_by(forecast, type) %>% 
+  summarise(mase = mean(abs(yhat - y)) / mean(abs(naive - y))) %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = type, values_from = mase) %>% 
+  ggplot((aes(x = additive, y = multiplicative))) + 
+  geom_abline() + 
+  geom_point() + 
+  coord_obs_pred()
+```
+
+```{r}
+ts_tune %>% 
+  select(id, res) %>% 
+  unnest(res) %>% 
+  group_by(id, type) %>% 
+  arrange(ds) %>% 
+  mutate(forecast = paste0("forecast_", row_number())) %>% 
+  ungroup() %>% 
+  select(forecast, type, ds, yhat, y) %>% 
+  left_join(cleaned_df %>% 
+              mutate(naive = lag(y, n = 1, order_by = ds)) %>% 
+              drop_na() %>% 
+              select(ds, naive),
+            by =  "ds") %>% 
+  group_by(forecast, type) %>% 
+  summarise(mase = mean(abs(yhat - y)) / mean(abs(naive - y))) %>% 
+  ungroup() %>% 
+  group_by(type) %>% 
+  summarise(median = median(mase))
+```
+
+
+```{r}
+ts_tune %>% 
+  select(id, res) %>% 
+  unnest(res) %>% 
+  group_by(id, type) %>% 
+  arrange(ds) %>% 
+  mutate(forecast = paste0("forecast_", row_number())) %>% 
+  ungroup() %>% 
+  select(id, forecast, type, ds, yhat, y) %>% 
+  group_by(id, type) %>% 
+  mutate(naive_date = min(ds) - months(1)) %>% 
+  ungroup() %>% 
+  left_join(cleaned_df %>% 
+                        mutate(naive = lag(y, n = 1, order_by = ds)) %>% 
+                        drop_na() %>% 
+                        select(ds, naive),
+                      by =  c("naive_date" = "ds")) %>% 
+  group_by(forecast, type) %>% 
+  summarise(mase = mean(abs(yhat - y)) / mean(abs(naive - y))) %>% 
+  ungroup() %>% 
+  group_by(type) %>% 
+  summarise(median = median(mase))
+```
+
+
+
+
+```{r}
+m <- prophet(df = cleaned_df %>% arrange(ds))
+
+future <- make_future_dataframe(m, periods = 6, freq = "month", include_history = TRUE)
+
+forecast <- predict(m, future)
+
+prophet_plot_components(m, forecast)
+
+plot(m, forecast) + 
+  add_changepoints_to_plot(m)
+```
+
+
+```{r}
+m <- prophet(df = cleaned_df %>% arrange(ds), seasonality.mode = "multiplicative")
+
+future <- make_future_dataframe(m, periods = 6, freq = "month", include_history = TRUE)
+
+forecast <- predict(m, future)
+
+prophet_plot_components(m, forecast)
+
+plot(m, forecast) + 
+  add_changepoints_to_plot(m)
+```
+
+
+
