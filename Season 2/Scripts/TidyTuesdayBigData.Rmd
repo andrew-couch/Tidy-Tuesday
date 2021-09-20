@@ -1,0 +1,266 @@
+---
+title: "TidyTuesdayBigData"
+author: "Andrew Couch"
+date: "9/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(tidypredict)
+library(finetune)
+library(sparklyr)
+library(DBI)
+options(tidymodels.dark = TRUE)
+
+df <- read_csv("Data/customer_churn.csv")
+```
+
+```{r}
+is.na(df) %>% colSums()
+
+# Convert features to factors and drop missing values
+df <- df %>% 
+  mutate(across(where(is.character), as.factor)) %>% 
+  drop_na()
+```
+
+```{r}
+df
+```
+
+```{r}
+model_split <- initial_split(df %>% select(-customerID), strata = Churn)
+train_data <- training(model_split)
+k_folds_data <- vfold_cv(train_data)
+```
+
+```{r}
+mars_model <- mars(num_terms = tune(), prod_degree = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("earth")
+
+rec <- recipe(Churn~., data = train_data) %>% 
+  step_dummy(all_nominal_predictors())
+
+rec %>% prep() %>% juice()
+
+mars_res <- tune_sim_anneal(mars_model, rec, k_folds_data, metrics = metric_set(roc_auc))
+```
+
+
+```{r}
+autoplot(mars_res)
+```
+
+```{r}
+show_best(mars_res, "roc_auc")
+```
+
+
+
+```{r}
+mars(num_terms = 5, prod_degree = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("earth") %>% 
+  fit(Churn~., data = rec %>% prep() %>% juice()) %>% 
+  vip::vip()
+```
+
+```{r}
+workflow() %>% 
+  add_model(mars(num_terms = 5, prod_degree = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("earth")) %>% 
+  add_recipe(rec) %>% 
+  last_fit(model_split) %>% 
+  collect_metrics()
+```
+
+
+
+
+```{r}
+mars(num_terms = 5, prod_degree = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("earth") %>% 
+  fit(Churn~., data = rec %>% prep() %>% juice()) %>% 
+  tidypredict_sql(dbplyr::simulate_mysql())
+```
+
+
+```{r}
+con <- dbConnect(RSQLite::SQLite(), dbname = ":memory:")
+
+copy_to(con, df)
+```
+
+
+```{sql, connection = con, output.var = "sql_pred"}
+SELECT 1.0 - 1.0 / (1.0 + EXP(0.156081428035868 + (CASE WHEN (`tenure` < 10.0) THEN (10.0 - `tenure`) WHEN NOT(`tenure` < 10.0) THEN (0.0) END * 0.0310290972457379) + (CASE WHEN (`tenure` > 10.0) THEN (`tenure` - 10.0) WHEN NOT(`tenure` > 10.0) THEN (0.0) END * -0.00375498053077481) + (`InternetService_Fiber.optic` * 0.236063007144752) + (`PaymentMethod_Electronic.check` * 0.134176965932244))) AS CHURN_PROB, customerID
+FROM (
+  SELECT 
+    InternetService, 
+    CASE WHEN InternetService = 'Fiber optic' THEN 1 ELSE 0 END AS 'InternetService_Fiber.optic',
+    CASE WHEN PaymentMethod = 'Electronic check' THEN 1 ELSE 0 END AS 'PaymentMethod_Electronic.check',
+    PaymentMethod, tenure, customerID, Churn
+  FROM df
+) A 
+
+```
+
+
+
+```{r}
+mars(num_terms = 5, prod_degree = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("earth") %>% 
+  fit(Churn~., data = rec %>% prep() %>% juice()) %>% 
+  augment(rec %>% prep() %>% bake(df)) %>% 
+  bind_cols(df %>% select(customerID)) %>% 
+  select(customerID, mars_model = .pred_Yes) %>% 
+  left_join(sql_pred, by = c("customerID")) %>% 
+  rename(sql_model = CHURN_PROB) %>% 
+  ggplot(aes(x = mars_model, y = sql_model)) + 
+  geom_point() +
+  geom_abline() + 
+  coord_obs_pred()
+```
+
+
+```{r}
+mars(num_terms = 5, prod_degree = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("earth") %>% 
+  fit(Churn~., data = rec %>% prep() %>% juice()) %>% 
+  augment(rec %>% prep() %>% bake(df)) %>% 
+  bind_cols(df %>% select(customerID)) %>% 
+  select(customerID, mars_model = .pred_Yes) %>% 
+  left_join(sql_pred, by = c("customerID")) %>% 
+  rename(sql_model = CHURN_PROB) %>% 
+  lm(mars_model ~ sql_model, data = .) %>% 
+  augment() %>% 
+  ggplot(aes(x = mars_model, y = .fitted)) +
+  geom_point() + 
+  geom_abline() + 
+  coord_obs_pred()
+
+mars(num_terms = 5, prod_degree = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("earth") %>% 
+  fit(Churn~., data = rec %>% prep() %>% juice()) %>% 
+  augment(rec %>% prep() %>% bake(df)) %>% 
+  bind_cols(df %>% select(customerID)) %>% 
+  select(customerID, mars_model = .pred_Yes) %>% 
+  left_join(sql_pred, by = c("customerID")) %>% 
+  rename(sql_model = CHURN_PROB) %>% 
+  lm(mars_model ~ sql_model, data = .) %>% 
+  tidy()
+```
+
+
+```{sql, connection = con, output.var = "sql_adjust"}
+WITH  
+  DATA AS (
+  SELECT 
+    InternetService, 
+    CASE WHEN InternetService = 'Fiber optic' THEN 1 ELSE 0 END AS 'InternetService_Fiber.optic',
+    CASE WHEN PaymentMethod = 'Electronic check' THEN 1 ELSE 0 END AS 'PaymentMethod_Electronic.check',
+    PaymentMethod, tenure, customerID, Churn
+  FROM df
+  ),
+  MODEL_DATA AS (
+  SELECT 1.0 - 1.0 / (1.0 + EXP(0.156081428035868 + (CASE WHEN (`tenure` < 10.0) THEN (10.0 - `tenure`) WHEN NOT(`tenure` < 10.0) THEN (0.0) END * 0.0310290972457379) + (CASE WHEN (`tenure` > 10.0) THEN (`tenure` - 10.0) WHEN NOT(`tenure` > 10.0) THEN (0.0) END * -0.00375498053077481) + (`InternetService_Fiber.optic` * 0.236063007144752) + (`PaymentMethod_Electronic.check` * 0.134176965932244))) AS CHURN_PROB, customerID
+FROM DATA
+  ),
+  ADJUSTED_PRED AS (
+  SELECT CHURN_PROB,  -2.066632	+ (4.126507	* CHURN_PROB) AS ADJUSTED_PROB, customerID
+  FROM MODEL_DATA
+  )
+ 
+SELECT * 
+FROM ADJUSTED_PRED
+```
+
+
+
+```{r}
+mars(num_terms = 5, prod_degree = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("earth") %>% 
+  fit(Churn~., data = rec %>% prep() %>% juice()) %>% 
+  augment(rec %>% prep() %>% bake(df)) %>% 
+  bind_cols(df %>% select(customerID)) %>% 
+  select(customerID, mars_model = .pred_Yes) %>% 
+  left_join(sql_adjust, by = "customerID") %>% 
+  rename(NON_ADJUSTED_PROB = CHURN_PROB) %>% 
+  pivot_longer(c(NON_ADJUSTED_PROB, ADJUSTED_PROB)) %>% 
+  ggplot(aes(x = mars_model, y = value, color = name)) + 
+  geom_point() + 
+  geom_abline() +
+  coord_obs_pred()
+```
+
+
+
+```{r}
+# spark_install(version = "2.1.0")
+
+sc <- spark_connect(master = "local")
+
+churn_tbl <- copy_to(sc, df)
+```
+
+```{r}
+train_data
+
+glm(Churn ~., data = rec %>% prep() %>% juice(), family = binomial()) %>% 
+  tidy() %>% 
+  filter(p.value <= 0.05)
+```
+
+
+```{r}
+spark_dplyr <- churn_tbl %>% 
+  mutate(contrct_one_year = if_else(Contract == "One year", 1, 0),
+         contrct_two_year = if_else(Contract == "Two year", 1, 0),
+         paperless_yes = if_else(PaperlessBilling == "Yes", 1, 0),
+         multiple_lines_yes = if_else(MultipleLines == "Yes", 1, 0),
+         paymentMethod_electronic = if_else(PaymentMethod == "Electronic check", 1, 0)) %>% 
+  select(Churn, customerID, SeniorCitizen, tenure, TotalCharges, multiple_lines_yes, contrct_one_year, 
+         contrct_two_year, paperless_yes, paymentMethod_electronic)
+
+
+ft_dplyr_transformer(sc, spark_dplyr) %>% 
+  ml_param("statement")
+```
+
+
+```{r}
+churn_pipeline <- ml_pipeline(sc) %>% 
+  ft_dplyr_transformer(tbl = spark_dplyr) %>% 
+  ft_r_formula(Churn ~ SeniorCitizen + tenure + TotalCharges + multiple_lines_yes + contrct_one_year + 
+         contrct_two_year + paperless_yes + paymentMethod_electronic) %>% 
+  ml_random_forest_classifier()
+
+spark_split <- sdf_random_split(churn_tbl, training = 0.8, testing = 0.2)
+
+spark_model <- ml_fit(churn_pipeline, spark_split$training)
+
+spark_pred <- ml_transform(spark_model, spark_split$testing)
+
+res <- spark_pred %>% 
+  select(Churn, customerID, prediction, probability) %>% 
+  collect()
+```
+
+```{r}
+res %>% mutate(probability = map_dbl(probability, ~pluck(.x, 2)))
+```
+
+
